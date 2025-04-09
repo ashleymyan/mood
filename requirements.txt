@@ -1,0 +1,13 @@
+torch
+torchvision
+matplotlib
+opencv-python
+pillow==10.4.0
+transformers==4.47.0
+diffusers==0.32.2
+omegaconf==2.3.0
+scikit-dimension==0.3.4
+pytorch-lightning==1.9.4
+open_clip_torch==2.31.0
+ip_adapter @ git+https://github.com/tencent-ailab/IP-Adapter.git
+ncut_pytorch==1.8.19
