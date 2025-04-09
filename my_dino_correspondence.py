@@ -1,6 +1,6 @@
 import numpy as np
 from PIL import Image
-from n25c8AAA_dino_clip_featextract import img_transform_inv
+from dino_clip_featextract import img_transform_inv
 from my_ipadapter_model import image_grid
 
 from ncut_pytorch import NCUT, kway_ncut, rgb_from_tsne_3d, convert_to_lab_color
