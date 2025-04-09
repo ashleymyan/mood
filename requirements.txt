@@ -2,9 +2,8 @@ torch
 torchvision
 matplotlib
 opencv-python
-pillow==10.4.0
-diffusers==0.22.1
-omegaconf==2.3.0
-scikit-dimension==0.3.4
+pillow
+omegaconf
+scikit-dimension
 pytorch-lightning==1.9.4
 ncut_pytorch==1.8.19
