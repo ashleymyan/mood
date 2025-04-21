@@ -1,30 +1,6 @@
 import torch
 from scipy.spatial import Delaunay
 
-# def _compute_delaunay_gpu(points):
-#     """Compute Delaunay triangulation of points using CuPy (GPU-accelerated)"""
-#     import cupy as cp 
-#     from cupyx.scipy.spatial import Delaunay as CupyDelaunay
-#     # Convert torch tensor to CuPy array
-#     points_cp = cp.asarray(points.detach().cpu().numpy())
-    
-#     # Compute Delaunay triangulation on GPU
-#     tri = CupyDelaunay(points_cp)
-    
-#     # Convert simplices back to torch tensor on the original device
-#     simplices = torch.tensor(cp.asnumpy(tri.simplices), device=points.device)
-#     return simplices
-
-# @torch.no_grad()
-# def compute_delaunay(points):
-#     """Compute Delaunay triangulation of points"""
-#     try:
-#         return _compute_delaunay_gpu(points)
-#     except ImportError:
-#         return _compute_delaunay_cpu(points)
-
-# from torch_delaunay.functional import shull2d
-
 def pca_reduce_to_2d(points):
     u, s, v = torch.svd(points)
     return points @ v[:, :2]

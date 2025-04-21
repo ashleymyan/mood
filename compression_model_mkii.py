@@ -132,8 +132,8 @@ class CompressionModel(pl.LightningModule):
         self.progress = gr.Progress()
 
     def training_step(self, batch):
-        # if self.gradio_progress and self.trainer.global_step % 10 == 0 and self.trainer.global_step > 0:
-            # self.progress(self.trainer.global_step/self.cfg.steps, desc=f"Training, loss = {self.loss_history['recon'][-1]:.4f}")
+        if self.gradio_progress and self.trainer.global_step % 10 == 0 and self.trainer.global_step > 0:
+            self.progress(self.trainer.global_step/self.cfg.steps, desc=f"Training, loss = {self.loss_history['recon'][-1]:.4f}")
 
         feats = batch[0]
         target_feats = batch[1]

@@ -66,6 +66,8 @@ def load_gradio_images_helper(pil_images):
         pil_images = [image[0] for image in pil_images]
     if isinstance(pil_images[0], str):
         pil_images = [Image.open(image) for image in pil_images]
+    # convert to RGB
+    pil_images = [image.convert("RGB") for image in pil_images]
     return pil_images
 
 
@@ -166,7 +168,7 @@ def analogy_three_images(image_list, model, ws, n_cluster=30, n_sample=1, match_
             ax.axis('off')
             if i_img == 0:
                 ax.set_title(f"w={w:.2f}")
-    
+    fig.tight_layout()
     del ip_model
     free_memory()
     return correspondence_image, fig, interpolated_images
@@ -229,7 +231,9 @@ def plot_loss(model):
     
     return fig
 
-
+DEFAULT_IMAGES = [os.path.join("/data/mar25/duck_toiletpaper/" , f"{i+1:02d}.png") for i in range(3)]
+DEFAULT_IMAGES = [Image.open(image_path) for image_path in DEFAULT_IMAGES]
+DEFAULT_IMAGES = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in DEFAULT_IMAGES]
 # %%
 if __name__ == "__main__":
     import gradio as gr
@@ -245,8 +249,8 @@ if __name__ == "__main__":
 
             with gr.Row():
                 with gr.Column():
-                    input_images = gr.Gallery(label="Mood Board Images", show_label=False)
-                    upload_button = gr.UploadButton(elem_id="upload_button", label="Upload Append", variant='secondary', file_types=["image"], file_count="multiple")
+                    input_images = gr.Gallery(label="Mood Board Images", show_label=False, value=DEFAULT_IMAGES)
+                    upload_button = gr.UploadButton(elem_id="upload_button", label="Upload", variant='secondary', file_types=["image"], file_count="multiple")
                     
                     def convert_to_pil_and_append(images, new_images):
                         if images is None:
@@ -264,7 +268,7 @@ if __name__ == "__main__":
                     upload_button.upload(convert_to_pil_and_append, inputs=[input_images, upload_button], outputs=[input_images])
                     
                     def load_example():
-                        default_images = [os.path.join("/data/mar25/duck_cat_dog" , f"{i:03d}.jpg") for i in range(10)]
+                        default_images = DEFAULT_IMAGES
                         images = [Image.open(image_path) for image_path in default_images]
                         # resize to 512x512
                         images = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in images]
@@ -275,7 +279,7 @@ if __name__ == "__main__":
                 with gr.Column():
                     with gr.Accordion("Training Parameters"):
                         lr = gr.Slider(minimum=0.0001, maximum=0.01, step=0.0001, value=0.001, label="Learning Rate")
-                        steps = gr.Slider(minimum=1000, maximum=100000, step=100, value=1000, label="Training Steps")
+                        steps = gr.Slider(minimum=1000, maximum=100000, step=100, value=1500, label="Training Steps")
                         width = gr.Slider(minimum=16, maximum=4096, step=16, value=512, label="MLP Width")
                         layers = gr.Slider(minimum=1, maximum=8, step=1, value=4, label="MLP Layers")
                     train_button = gr.Button("Train", variant="primary")
@@ -283,31 +287,32 @@ if __name__ == "__main__":
                     def _train_wrapper(images, lr, steps, width, layers):
                         model, trainer = train_mood_space(images, lr, steps, width, layers)
                         loss_plot = plot_loss(model)
+                        gr.Info(f"Training complete.")
                         return model, loss_plot
 
                     loss_plot = gr.Plot(label="Training Loss")
                     train_button.click(_train_wrapper, inputs=[input_images, lr, steps, width, layers], outputs=[model, loss_plot])
 
         with gr.Tab("2. Interpolate"):
-            gr.Markdown("Interpolate between two images")
+            # gr.Markdown("Interpolate between two images")
 
             with gr.Row():
-                input_A1 = gr.Image(label="A1", type="pil")
-                input_B1 = gr.Image(label="B1", type="pil")
+                input_A1 = gr.Image(label="A1", type="pil", value=DEFAULT_IMAGES[0])
+                input_B1 = gr.Image(label="B1", type="pil", value=DEFAULT_IMAGES[1])
             
                 with gr.Column():
                     def _load_two_images():
-                        default_images = [os.path.join("/data/mar25/duck_cat_dog" , f"{i:03d}.jpg") for i in range(2)]
+                        default_images = DEFAULT_IMAGES[:2]
                         images = [Image.open(image_path) for image_path in default_images]
                         return images[0], images[1]
                     load_example_button3 = gr.Button("Load Example Images")
                     load_example_button3.click(_load_two_images, inputs=[], outputs=[input_A1, input_B1])
                     fill_in_images_button = gr.Button("Fill in Images")
 
-                    with gr.Accordion("Interpolation Parameters"):
+                    with gr.Accordion("Interpolation Parameters", open=False):
                         w_left = gr.Slider(minimum=-10, maximum=10, step=0.01, value=0, label="Start w")
-                        w_right = gr.Slider(minimum=-10, maximum=10, step=0.01, value=1.5, label="End w")
-                        n_steps = gr.Slider(minimum=1, maximum=100, step=10, value=6, label="N interpolation")
+                        w_right = gr.Slider(minimum=-10, maximum=10, step=0.01, value=1, label="End w")
+                        n_steps = gr.Slider(minimum=1, maximum=100, step=2, value=10, label="N interpolation")
                         n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=1, label="N samples per interpolation")
                         n_cluster = gr.Slider(minimum=1, maximum=100, step=1, value=10, label="N segments", info="for correspondence matching")
                         match_method = gr.Radio(choices=['hungarian', 'argmin'], value='hungarian', label="Matching Method")
@@ -315,7 +320,7 @@ if __name__ == "__main__":
 
 
             interpolated_images_plot = gr.Image(label="interpolated images")
-            interpolated_images = gr.Gallery(label="Interpolated Images", show_label=False)
+            interpolated_images = gr.Gallery(label="Interpolated Images", show_label=False, visible=False)
             add_download_button(interpolated_images, filename_prefix="interpolated_images")
 
             def _infer_two_images(A1, B1, model, w_left, w_right, n_steps, n_cluster, n_sample, match_method):
@@ -329,7 +334,7 @@ if __name__ == "__main__":
                 # resize interpolated_images to 512x512
                 interpolated_images = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in interpolated_images]
                 plot_images = [images[0].resize((512, 512), resample=Image.Resampling.LANCZOS)] + interpolated_images + [images[1].resize((512, 512), resample=Image.Resampling.LANCZOS)]
-                plot_images = image_grid(plot_images, 1, len(plot_images))
+                plot_images = image_grid(plot_images, 2, len(plot_images)//2)
                 return interpolated_images, plot_images
             interpolate_button.click(_infer_two_images, 
                                     inputs=[input_A1, input_B1, model, w_left, w_right, n_steps, n_cluster, n_sample, match_method], 
@@ -342,35 +347,30 @@ if __name__ == "__main__":
                 return input_images[0][0], input_images[1][0]
             fill_in_images_button.click(fill_in_images, inputs=[input_images], outputs=[input_A1, input_B1])
 
-        with gr.Tab("3. Analogy Reasoning"):
-            gr.Markdown("""
-            Analogy Reasoning on Mood Board
-            - A2: image to be interpolated
-            - A1: reference source image
-            - B1: reference target image
-                        
+        with gr.Tab("3. Path Lifting"):
+            gr.Markdown("""                        
             given A1 -> B1, infer A2 -> B2
             """)
 
             with gr.Row():
-                input_A1 = gr.Image(label="A1", type="pil")
-                input_B1 = gr.Image(label="B1", type="pil")
-                input_A2 = gr.Image(label="A2", type="pil")
+                input_A1 = gr.Image(label="A1", type="pil", value=DEFAULT_IMAGES[0])
+                input_B1 = gr.Image(label="B1", type="pil", value=DEFAULT_IMAGES[1])
+                input_A2 = gr.Image(label="A2", type="pil", value=DEFAULT_IMAGES[2])
                 picked_B2 = gr.Image(label="B2", type="pil", interactive=False)
             
                 with gr.Column():
                     def _load_three_images():
-                        default_images = [os.path.join("/data/mar25/duck_cat_dog" , f"{i:03d}.jpg") for i in range(3)]
+                        default_images = DEFAULT_IMAGES
                         images = [Image.open(image_path) for image_path in default_images]
                         return images[0], images[1], images[2]
                     load_example_button2 = gr.Button("Load Example Images")
                     load_example_button2.click(_load_three_images, inputs=[], outputs=[input_A2, input_A1, input_B1])
                     fill_in_images_button2 = gr.Button("Fill in Images")
-                    with gr.Accordion("Interpolation Parameters"):
+                    with gr.Accordion("Interpolation Parameters", open=False):
                         w_left = gr.Slider(minimum=-10, maximum=10, step=0.01, value=0, label="Start w")
-                        w_right = gr.Slider(minimum=-10, maximum=10, step=0.01, value=1.5, label="End w")
-                        n_steps = gr.Slider(minimum=1, maximum=100, step=10, value=6, label="N interpolation")
-                        n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=1, label="N samples per interpolation")
+                        w_right = gr.Slider(minimum=-10, maximum=10, step=0.01, value=1., label="End w")
+                        n_steps = gr.Slider(minimum=1, maximum=100, step=10, value=12, label="N interpolation")
+                        n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=4, label="N samples per interpolation")
                         n_cluster = gr.Slider(minimum=1, maximum=100, step=1, value=10, label="N segments", info="for correspondence matching")
                         match_method = gr.Radio(choices=['hungarian', 'argmin'], value='hungarian', label="Matching Method")
                     interpolate_button = gr.Button("Interpolate", variant="primary")
@@ -382,7 +382,7 @@ if __name__ == "__main__":
 
 
             output_B2 = gr.Plot(label="B2 (interpolated)")
-            interpolated_images = gr.Gallery(label="Interpolated Images", show_label=False)
+            interpolated_images = gr.Gallery(label="Interpolated Images", show_label=False, visible=False)
             correspondence_image = gr.Image(label="Correspondence Image", interactive=False)
             add_download_button(interpolated_images, filename_prefix="interpolated_images")
 
