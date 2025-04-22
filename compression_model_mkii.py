@@ -22,36 +22,9 @@ from riemann_curvature_loss import compute_axis_align_loss
 
 import gradio as gr
 
-def nystrom_ncut_wrapper(features, n_eig, degree=None, gamma=0.5, distance='rbf', max_num_sample=2056):
-    num_sample = min(max_num_sample, features.shape[0]//4)
-    if gamma is None:
-        with torch.no_grad():
-            gamma = find_gamma_by_degree_after_fps(features, degree=degree, num_sample=num_sample, distance=distance, max_iter=10)
-            
-    n_eig += 6  # for better svd_lowrank
-    n_eig = min(n_eig, features.shape[0]//4)
-    eigvec, eigval, sampled_indices = nystrom_ncut(features, n_eig, 
-                                num_sample=num_sample, sample_method='farthest',
-                                distance=distance, affinity_focal_gamma=gamma,
-                                indirect_connection=False, make_orthogonal=False)
-    eigvec = eigvec[:, :-6]
-    eigval = eigval[:-6]
-    return eigvec, eigval
-
-
-def nystrom_ncut_wrapper_safe(*args, **kwargs):
-    features = args[0]
-    n_eig = args[1]
-    if torch.any(features.isnan()):
-        raise ValueError("input contains NaN values")
-    
-    try:
-        return nystrom_ncut_wrapper(*args, **kwargs)
-    except:
-        logging.warning("nystrom_ncut_wrapper failed, returning zeros")
-        eigvec = torch.zeros((features.shape[0], n_eig), device=features.device)
-        eigval = torch.zeros((n_eig,), device=features.device)
-        return eigvec, eigval
+from ncut_pytorch.ncut_pytorch import affinity_from_features, ncut
+from ncut_pytorch.affinity_gamma import find_gamma_by_degree_after_fps
+from ncut_pytorch.math_utils import compute_riemann_curvature_loss, compute_boundary_loss, compute_repulsion_loss, compute_axis_align_loss
 
 def _kway_ncut_loss(eigvec_gt, eigvec_hat, n_eig):
     _eigvec_gt = eigvec_gt[:, :n_eig]
@@ -59,7 +32,7 @@ def _kway_ncut_loss(eigvec_gt, eigvec_hat, n_eig):
     loss = F.smooth_l1_loss(_eigvec_gt @ _eigvec_gt.T, _eigvec_hat @ _eigvec_hat.T)
     return loss
 
-def hierarchical_kway_ncut_loss(eigvec_gt, eigvec_hat, n_eig, start=4, step_mult=2):
+def flag_space_loss(eigvec_gt, eigvec_hat, n_eig, start=4, step_mult=2):
     if torch.all(eigvec_gt == 0) or torch.all(eigvec_hat == 0):
         return torch.tensor(0, device=eigvec_gt.device)
     
@@ -71,6 +44,11 @@ def hierarchical_kway_ncut_loss(eigvec_gt, eigvec_hat, n_eig, start=4, step_mult
         if n_eig > eigvec_gt.shape[1] or n_eig > eigvec_hat.shape[1]:
             break
     return loss
+
+def ncut_wrapper(features, n_eig, distance='rbf', gamma=0.5):
+    A = affinity_from_features(features, distance=distance, gamma=gamma)
+    eigvec, eigval = ncut(A, n_eig)
+    return eigvec, eigval
 
 
 
@@ -143,13 +121,16 @@ class CompressionModel(pl.LightningModule):
         if self.id_mapping:
             feats_uncompressed_dummy = self.uncompress_dummy(feats_compressed)
         
-        eigvec_gt, eigval_gt = nystrom_ncut_wrapper_safe(feats[fg_masks], self.cfg.n_eig)
-        eigvec_hat, eigval_hat = nystrom_ncut_wrapper_safe(feats_compressed, self.cfg.n_eig)
+        if self.trainer.global_step == 0:
+            self.gamma = find_gamma_by_degree_after_fps(feats[fg_masks], 0.1, distance='rbf')
+            
+        eigvec_gt, eigval_gt = ncut_wrapper(feats[fg_masks], self.cfg.n_eig, gamma=self.gamma)
+        eigvec_hat, eigval_hat = ncut_wrapper(feats_compressed, self.cfg.n_eig, gamma=self.gamma)
         eigvec_hat = eigvec_hat[fg_masks]
 
         total_loss = 0
         if self.cfg.eigvec_loss > 0:
-            eigvec_loss = hierarchical_kway_ncut_loss(eigvec_gt, eigvec_hat, n_eig=self.cfg.n_eig)
+            eigvec_loss = flag_space_loss(eigvec_gt, eigvec_hat, n_eig=self.cfg.n_eig)
             self.log("loss/eigvec", eigvec_loss, prog_bar=True)
             total_loss += eigvec_loss * self.cfg.eigvec_loss
             self.loss_history['eigvec'].append(eigvec_loss.item())

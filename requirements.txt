@@ -4,7 +4,7 @@ einops
 matplotlib
 opencv-python
 pillow
-skimage
+scikit-image
 omegaconf
 scikit-dimension
 pytorch-lightning==1.9.4
