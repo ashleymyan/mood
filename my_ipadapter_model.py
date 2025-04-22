@@ -88,13 +88,12 @@ def load_sdxl():
     return pipe
 
 @torch.inference_mode()
-def load_ipadapter():
+def load_ipadapter(device="cuda"):
 
     base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
     vae_model_path = "stabilityai/sd-vae-ft-mse"
     image_encoder_path = "./downloads/models/image_encoder"
     ip_ckpt = "./downloads/models/ip-adapter-plus_sd15.bin"
-    device = "cuda"
 
     noise_scheduler = DDIMScheduler(
         num_train_timesteps=1000,
