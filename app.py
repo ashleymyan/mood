@@ -12,6 +12,14 @@ from my_dino_correspondence import get_correspondence_plot, ncut_tsne_multiple_i
 from compression_model_mkii import CompressionModel, train_compression_model, free_memory, get_fg_mask
 
 
+USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "true")
+
+if USE_HUGGINGFACE_ZEROGPU:  # huggingface ZeroGPU, dynamic GPU allocation 
+    try:
+        import spaces
+    except:
+        USE_HUGGINGFACE_ZEROGPU = False
+
 import torch
 from PIL import Image
 import numpy as np
@@ -23,7 +31,7 @@ plt.rcParams['font.family'] = 'monospace'
 from omegaconf import OmegaConf
 
 
-
+@spaces.GPU(duration=60)
 def train_mood_space(pil_images, lr=0.001, steps=5000, width=512, layers=4, dim=None, config_path="/workspace/n25c9600.yaml"): 
     images = load_gradio_images_helper(pil_images)
     images = torch.stack([img_transform(image) for image in images])
@@ -117,7 +125,7 @@ def find_direction_two_images(image_embeds, eigvecs, A_to_B, unit_norm_direction
             direction_for_A[mask] = direction_A_to_B[i_cluster]
     return direction_for_A
 
-
+@spaces.GPU(duration=60)
 def analogy_three_images(image_list, model, ws, n_cluster=30, n_sample=1, match_method='hungarian'):
     # image_list: A2, A1, B1
     # ws: list of float
@@ -173,7 +181,7 @@ def analogy_three_images(image_list, model, ws, n_cluster=30, n_sample=1, match_
     free_memory()
     return correspondence_image, fig, interpolated_images
 
-
+@spaces.GPU(duration=60)
 def interpolate_two_images(image1, image2, model, ws, n_cluster=20, match_method='hungarian', unit_norm_direction=False, dino_matching=True, seed=None):
     free_memory()
     images = torch.stack([img_transform(image) for image in [image1, image2]])
