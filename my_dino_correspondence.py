@@ -31,7 +31,7 @@ def _kway_cluster_one_image(image_embeds, n_cluster, gamma=0.5, degree=0.5):
     num_samples = min(1000, inp.shape[0]//2)
     eigvec, eigval = NCUT(n_eig, num_sample=num_samples, 
                           affinity_focal_gamma=gamma, distance='rbf', device='cuda').fit_transform(inp)
-    eigvec_onehot, eigvec_continues = kway_ncut(eigvec[:, :n_cluster], return_continuous=True)
+    eigvec_continues = kway_ncut(eigvec[:, :n_cluster], return_continuous=True)
     return eigvec_continues
 
 def kway_cluster_per_image(image_embeds, n_cluster, gamma=0.5, degree=0.5):
@@ -52,7 +52,7 @@ def kway_cluster_multiple_images(image_embeds, n_cluster, gamma=0.5, degree=0.5)
     num_samples = min(1000, inp.shape[0]//2)
     eigvec, eigval = NCUT(n_eig, num_sample=num_samples, 
                           affinity_focal_gamma=gamma, distance='rbf', device='cuda').fit_transform(inp)
-    eigvec_onehot, eigvec_continues = kway_ncut(eigvec[:, :n_cluster], return_continuous=True)
+    eigvec_continues = kway_ncut(eigvec[:, :n_cluster], return_continuous=True)
     eigvec_continues = rearrange(eigvec_continues, '(b l) c -> b l c', b=b)
     return eigvec_continues
 
