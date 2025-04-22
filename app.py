@@ -234,8 +234,8 @@ def plot_loss(model):
 DEFAULT_IMAGES = [os.path.join("./images/", f"{i+1:02d}.jpg") for i in range(3)]
 DEFAULT_IMAGES = [Image.open(image_path) for image_path in DEFAULT_IMAGES]
 DEFAULT_IMAGES = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in DEFAULT_IMAGES]
-# from download_models import download_ipadapter  
-# download_ipadapter()
+from download_models import download_ipadapter  
+download_ipadapter()
 # %%
 if __name__ == "__main__":
     import gradio as gr

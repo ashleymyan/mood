@@ -6,4 +6,4 @@ def download_ipadapter():
 
     from my_ipadapter_model import load_ipadapter
 
-    ip_model = load_ipadapter()
+    ip_model = load_ipadapter(device="cpu")
