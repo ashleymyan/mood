@@ -233,13 +233,13 @@ def train_compression_model(model, cfg: DictConfig, input_feats, target_feats,
     input_feats = input_feats.flatten(end_dim=-2)
     target_feats = target_feats.flatten(end_dim=-2)
 
-    logger = pl.loggers.TensorBoardLogger(cfg.log_dir, name=cfg.name)
+    # logger = pl.loggers.TensorBoardLogger(cfg.log_dir, name=cfg.name)
     trainer = pl.Trainer(max_steps=cfg.steps,
                          gradient_clip_val=cfg.grad_clip_val,
                          accelerator="gpu", 
                          devices=devices,
                          enable_checkpointing=False,
-                         logger=logger,
+                        #  logger=logger,
     )
     dataset = DatasetWithSimplices(input_feats, target_feats, plus_masks)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
