@@ -32,7 +32,7 @@ from omegaconf import OmegaConf
 
 
 @spaces.GPU(duration=60)
-def train_mood_space(pil_images, lr=0.001, steps=5000, width=512, layers=4, dim=None, config_path="/workspace/n25c9600.yaml"): 
+def train_mood_space(pil_images, lr=0.001, steps=5000, width=512, layers=4, dim=None, config_path="./config.yaml"): 
     images = load_gradio_images_helper(pil_images)
     images = torch.stack([img_transform(image) for image in images])
     dino_image_embeds = extract_dino_image_embeds(images)
