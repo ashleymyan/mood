@@ -4,7 +4,7 @@ from dino_clip_featextract import img_transform_inv
 from my_ipadapter_model import image_grid
 
 from ncut_pytorch import NCUT, kway_ncut, rgb_from_tsne_3d, convert_to_lab_color
-from ncut_pytorch.ncut_pytorch import find_gamma_by_degree
+from ncut_pytorch.affinity_gamma import find_gamma_by_degree
 from einops import rearrange
 import torch
 

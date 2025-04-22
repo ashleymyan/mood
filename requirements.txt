@@ -1,11 +1,13 @@
 torch
 torchvision
+einops
 matplotlib
 opencv-python
 pillow
 omegaconf
 scikit-dimension
 pytorch-lightning==1.9.4
-diffusers==0.32.2
+diffusers==0.33.1
 transformers==4.47.0
-ncut_pytorch==1.8.19
+triton==3.0.0
+ncut_pytorch==1.12.4
