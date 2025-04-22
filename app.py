@@ -231,7 +231,7 @@ def plot_loss(model):
     
     return fig
 
-DEFAULT_IMAGES = [os.path.join("/data/mar25/duck_toiletpaper/" , f"{i+1:02d}.png") for i in range(3)]
+DEFAULT_IMAGES = [os.path.join("./images/", f"{i+1:02d}.jpg") for i in range(3)]
 DEFAULT_IMAGES = [Image.open(image_path) for image_path in DEFAULT_IMAGES]
 DEFAULT_IMAGES = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in DEFAULT_IMAGES]
 # %%
@@ -244,8 +244,8 @@ if __name__ == "__main__":
     with demo:
         model = gr.State([])
 
-        with gr.Tab("1. Mood Board"):
-            gr.Markdown("Train a Mood Board compression")
+        with gr.Tab("1. Mood Space"):
+            gr.Markdown("Train a Mood Space compression model")
 
             with gr.Row():
                 with gr.Column():
