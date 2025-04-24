@@ -12,7 +12,7 @@ from my_dino_correspondence import get_correspondence_plot, ncut_tsne_multiple_i
 from compression_model_mkii import CompressionModel, train_compression_model, free_memory, get_fg_mask
 
 
-USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "true")
+USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "false")
 
 if USE_HUGGINGFACE_ZEROGPU:  # huggingface ZeroGPU, dynamic GPU allocation 
     try:
@@ -31,7 +31,6 @@ plt.rcParams['font.family'] = 'monospace'
 from omegaconf import OmegaConf
 
 
-@spaces.GPU(duration=60)
 def train_mood_space(pil_images, lr=0.001, steps=5000, width=512, layers=4, dim=None, config_path="./config.yaml"): 
     images = load_gradio_images_helper(pil_images)
     images = torch.stack([img_transform(image) for image in images])
@@ -55,6 +54,8 @@ def train_mood_space(pil_images, lr=0.001, steps=5000, width=512, layers=4, dim=
     trainer = train_compression_model(model, cfg, dino_image_embeds, clip_image_embeds)
     return model, trainer
 
+if USE_HUGGINGFACE_ZEROGPU:
+    train_mood_space = spaces.GPU(duration=60)(train_mood_space)
 
 def train_mood_space_visualize(image_embeds, dim=2, config_path="/workspace/n25c9900_2d.yaml"): 
 
@@ -125,7 +126,6 @@ def find_direction_two_images(image_embeds, eigvecs, A_to_B, unit_norm_direction
             direction_for_A[mask] = direction_A_to_B[i_cluster]
     return direction_for_A
 
-@spaces.GPU(duration=60)
 def analogy_three_images(image_list, model, ws, n_cluster=30, n_sample=1, match_method='hungarian'):
     # image_list: A2, A1, B1
     # ws: list of float
@@ -181,7 +181,9 @@ def analogy_three_images(image_list, model, ws, n_cluster=30, n_sample=1, match_
     free_memory()
     return correspondence_image, fig, interpolated_images
 
-@spaces.GPU(duration=60)
+if USE_HUGGINGFACE_ZEROGPU:
+    analogy_three_images = spaces.GPU(duration=60)(analogy_three_images)
+
 def interpolate_two_images(image1, image2, model, ws, n_cluster=20, match_method='hungarian', unit_norm_direction=False, dino_matching=True, seed=None):
     free_memory()
     images = torch.stack([img_transform(image) for image in [image1, image2]])
@@ -218,6 +220,8 @@ def interpolate_two_images(image1, image2, model, ws, n_cluster=20, match_method
     free_memory()
     return interpolated_images
 
+if USE_HUGGINGFACE_ZEROGPU:
+    interpolate_two_images = spaces.GPU(duration=60)(interpolate_two_images)
 
 def plot_loss(model):
     # Plot loss curves from trainer
@@ -229,7 +233,8 @@ def plot_loss(model):
     ax1.set_title('Reconstruction Loss')
     ax1.grid(True)
 
-    ax2.plot(model.loss_history['eigvec'])
+    eigvec_loss = - np.array(model.loss_history['eigvec'])
+    ax2.plot(eigvec_loss)
     ax2.set_xlabel('Steps') 
     ax2.set_ylabel('Loss')
     ax2.set_title('Eigenvector Loss')
@@ -239,11 +244,12 @@ def plot_loss(model):
     
     return fig
 
-DEFAULT_IMAGES = [os.path.join("./images/", f"{i+1:02d}.jpg") for i in range(3)]
-DEFAULT_IMAGES = [Image.open(image_path) for image_path in DEFAULT_IMAGES]
-DEFAULT_IMAGES = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in DEFAULT_IMAGES]
-from download_models import download_ipadapter  
-download_ipadapter()
+DEFAULT_IMAGES_PATH = ["./images/black_bear1.jpg", "./images/black_bear2.jpg", "./images/pink_bear1.jpg"]
+DEFAULT_IMAGES = [Image.open(image_path) for image_path in DEFAULT_IMAGES_PATH]
+# DEFAULT_IMAGES = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in DEFAULT_IMAGES]
+if USE_HUGGINGFACE_ZEROGPU:
+    from download_models import download_ipadapter  
+    download_ipadapter()
 # %%
 if __name__ == "__main__":
     import gradio as gr
@@ -255,11 +261,19 @@ if __name__ == "__main__":
         model = gr.State([])
 
         with gr.Tab("1. Mood Space"):
-            gr.Markdown("Train a Mood Space compression model")
+            gr.Markdown("""
+                        Instructions:
+                        Please use the tabs to navigate through the app.
+                        - Tab 1: Train a Mood Space compression model
+                        - Tab 2: Interpolate between two images
+                        - Tab 3: Path Lifting, given A1 -> B1, what's the A2 -> B2?
+                        """)
+
+            # gr.Markdown("Train a Mood Space compression model")
 
             with gr.Row():
                 with gr.Column():
-                    input_images = gr.Gallery(label="Mood Board Images", show_label=False, value=DEFAULT_IMAGES)
+                    input_images = gr.Gallery(label="Mood Board Images", show_label=False)
                     upload_button = gr.UploadButton(elem_id="upload_button", label="Upload", variant='secondary', file_types=["image"], file_count="multiple")
                     
                     def convert_to_pil_and_append(images, new_images):
@@ -277,17 +291,17 @@ if __name__ == "__main__":
                         return images
                     upload_button.upload(convert_to_pil_and_append, inputs=[input_images, upload_button], outputs=[input_images])
                     
-                    def load_example():
-                        default_images = DEFAULT_IMAGES
-                        images = [Image.open(image_path) for image_path in default_images]
-                        # resize to 512x512
-                        images = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in images]
+                    # def load_example():
+                    #     default_images = DEFAULT_IMAGES
+                    #     return default_images
+                    def load_images(images):
                         return images
-                    load_example_button = gr.Button("Load Example Images")
-                    load_example_button.click(load_example, inputs=[], outputs=input_images)
-                    add_download_button(input_images, filename_prefix="mood_board_images")
+                    # load_example_button = gr.Button("Load Example Images")
+                    # load_example_button.click(load_example, inputs=[], outputs=input_images)
+                    # add_download_button(input_images, filename_prefix="mood_board_images")
+
                 with gr.Column():
-                    with gr.Accordion("Training Parameters"):
+                    with gr.Accordion("Training Parameters", open=False):
                         lr = gr.Slider(minimum=0.0001, maximum=0.01, step=0.0001, value=0.001, label="Learning Rate")
                         steps = gr.Slider(minimum=1000, maximum=100000, step=100, value=1500, label="Training Steps")
                         width = gr.Slider(minimum=16, maximum=4096, step=16, value=512, label="MLP Width")
@@ -303,21 +317,58 @@ if __name__ == "__main__":
                     loss_plot = gr.Plot(label="Training Loss")
                     train_button.click(_train_wrapper, inputs=[input_images, lr, steps, width, layers], outputs=[model, loss_plot])
 
+            example_groups = {
+                "Dog -> Fish": ["./images/dog1.jpg", "./images/fish.jpg"],
+                "Dog -> Paper": ["./images/dog1.jpg", "./images/paper2.jpg"],
+                "Rotation": ["./images/black_bear1.jpg", "./images/black_bear2.jpg"],
+                "Rotation (Analogy)": ["./images/black_bear1.jpg", "./images/black_bear2.jpg", "./images/pink_bear1.jpg"],
+                "Duck -> Pixel": ["./images/duck1.jpg", "./images/duck_pixel.jpg"],
+                "Duck -> Paper": ["./images/duck1.jpg", "./images/toilet_paper.jpg"],
+                "Duck -> Paper (Analogy)": ["./images/duck1.jpg", "./images/toilet_paper.jpg", "./images/duck_pixel.jpg"],
+            }
+
+            def add_image_group_fn(group_gallery):
+                images = [tup[0] for tup in group_gallery]
+                # resize images to 512x512
+                # images = [image.resize((512, 512), resample=Image.Resampling.LANCZOS) for image in images]
+                return images
+            
+            gr.Markdown('## Examples')
+            for group_name, group_images in example_groups.items():
+                with gr.Row():
+                    with gr.Column(scale=3):
+                        add_button = gr.Button(value=f'add example [{group_name}]', elem_classes=['small-button'])
+                    with gr.Column(scale=7):
+                        group_gallery = gr.Gallery(
+                            value=group_images,
+                            columns=5,
+                            rows=1,
+                            height=200,
+                            object_fit='scale-down',
+                            label=group_name,
+                            elem_classes=['large-gallery'],
+                        )
+
+                    add_button.click(
+                        add_image_group_fn,
+                        inputs=[group_gallery],
+                        outputs=[input_images],
+                    )
+
         with gr.Tab("2. Interpolate"):
             # gr.Markdown("Interpolate between two images")
 
             with gr.Row():
-                input_A1 = gr.Image(label="A1", type="pil", value=DEFAULT_IMAGES[0])
-                input_B1 = gr.Image(label="B1", type="pil", value=DEFAULT_IMAGES[1])
+                input_A1 = gr.Image(label="A1", type="pil")
+                input_B1 = gr.Image(label="B1", type="pil")
             
                 with gr.Column():
-                    def _load_two_images():
-                        default_images = DEFAULT_IMAGES[:2]
-                        images = [Image.open(image_path) for image_path in default_images]
-                        return images[0], images[1]
-                    load_example_button3 = gr.Button("Load Example Images")
-                    load_example_button3.click(_load_two_images, inputs=[], outputs=[input_A1, input_B1])
-                    fill_in_images_button = gr.Button("Fill in Images")
+                    # def _load_two_images():
+                    #     default_images = DEFAULT_IMAGES[:2]
+                    #     return default_images
+                    # load_example_button3 = gr.Button("Load Example Images")
+                    # load_example_button3.click(_load_two_images, inputs=[], outputs=[input_A1, input_B1])
+                    fill_in_images_button = gr.Button("Reload Images")
 
                     with gr.Accordion("Interpolation Parameters", open=False):
                         w_left = gr.Slider(minimum=-10, maximum=10, step=0.01, value=0, label="Start w")
@@ -326,7 +377,7 @@ if __name__ == "__main__":
                         n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=1, label="N samples per interpolation")
                         n_cluster = gr.Slider(minimum=1, maximum=100, step=1, value=10, label="N segments", info="for correspondence matching")
                         match_method = gr.Radio(choices=['hungarian', 'argmin'], value='hungarian', label="Matching Method")
-                    interpolate_button = gr.Button("Interpolate", variant="primary")
+                    interpolate_button = gr.Button("Run Interpolation", variant="primary")
 
 
             interpolated_images_plot = gr.Image(label="interpolated images")
@@ -356,6 +407,7 @@ if __name__ == "__main__":
                     return None
                 return input_images[0][0], input_images[1][0]
             fill_in_images_button.click(fill_in_images, inputs=[input_images], outputs=[input_A1, input_B1])
+            input_images.change(fill_in_images, inputs=[input_images], outputs=[input_A1, input_B1])
 
         with gr.Tab("3. Path Lifting"):
             gr.Markdown("""                        
@@ -363,27 +415,26 @@ if __name__ == "__main__":
             """)
 
             with gr.Row():
-                input_A1 = gr.Image(label="A1", type="pil", value=DEFAULT_IMAGES[0])
-                input_B1 = gr.Image(label="B1", type="pil", value=DEFAULT_IMAGES[1])
-                input_A2 = gr.Image(label="A2", type="pil", value=DEFAULT_IMAGES[2])
+                input_A1 = gr.Image(label="A1", type="pil")
+                input_B1 = gr.Image(label="B1", type="pil")
+                input_A2 = gr.Image(label="A2", type="pil")
                 picked_B2 = gr.Image(label="B2", type="pil", interactive=False)
             
                 with gr.Column():
-                    def _load_three_images():
-                        default_images = DEFAULT_IMAGES
-                        images = [Image.open(image_path) for image_path in default_images]
-                        return images[0], images[1], images[2]
-                    load_example_button2 = gr.Button("Load Example Images")
-                    load_example_button2.click(_load_three_images, inputs=[], outputs=[input_A2, input_A1, input_B1])
-                    fill_in_images_button2 = gr.Button("Fill in Images")
+                    # def _load_three_images():
+                    #     default_images = DEFAULT_IMAGES
+                    #     return default_images
+                    # load_example_button2 = gr.Button("Load Example Images")
+                    # load_example_button2.click(_load_three_images, inputs=[], outputs=[input_A2, input_A1, input_B1])
+                    fill_in_images_button2 = gr.Button("Reload Images")
                     with gr.Accordion("Interpolation Parameters", open=False):
                         w_left = gr.Slider(minimum=-10, maximum=10, step=0.01, value=0, label="Start w")
                         w_right = gr.Slider(minimum=-10, maximum=10, step=0.01, value=1., label="End w")
-                        n_steps = gr.Slider(minimum=1, maximum=100, step=10, value=12, label="N interpolation")
-                        n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=4, label="N samples per interpolation")
+                        n_steps = gr.Slider(minimum=1, maximum=100, step=2, value=12, label="N interpolation")
+                        n_sample = gr.Slider(minimum=1, maximum=100, step=1, value=1, label="N samples per interpolation")
                         n_cluster = gr.Slider(minimum=1, maximum=100, step=1, value=10, label="N segments", info="for correspondence matching")
                         match_method = gr.Radio(choices=['hungarian', 'argmin'], value='hungarian', label="Matching Method")
-                    interpolate_button = gr.Button("Interpolate", variant="primary")
+                    interpolate_button = gr.Button("Run Path Lifting", variant="primary")
 
                     def revert_images(A1, B1, A2, B2):
                         return B1, A1, B2, A2
@@ -422,8 +473,12 @@ if __name__ == "__main__":
             def fill_in_images(input_images):
                 if input_images is None:
                     return None
-                return input_images[0][0], input_images[1][0], input_images[0][0]
+                if len(input_images) == 2:
+                    return input_images[0][0], input_images[1][0], input_images[0][0]
+                elif len(input_images) == 3:
+                    return input_images[0][0], input_images[1][0], input_images[2][0]
             fill_in_images_button2.click(fill_in_images, inputs=[input_images], outputs=[input_A1, input_B1, input_A2])
+            input_images.change(fill_in_images, inputs=[input_images], outputs=[input_A1, input_B1, input_A2])
 
         # with gr.Tab("3. Make Plot"):
 
