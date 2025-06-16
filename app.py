@@ -503,4 +503,4 @@ if __name__ == "__main__":
         #     plot_button.click(open_images, inputs=[input_A1, input_B1, input_A2, picked_B2], outputs=[gallery_fig])
 
 
-    demo.launch()
+    demo.launch(share=True)
