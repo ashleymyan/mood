@@ -1,4 +1,4 @@
-in_dim: 384 #1000 #1024 # 384
+in_dim: 768 #1024 #768 #384
 mood_dim: -1
 out_dim: 1280
 latent_dim: 512

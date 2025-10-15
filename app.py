@@ -697,10 +697,10 @@ def create_gradio_interface():
                     reload_btn = gr.Button("Load from Training Set")
                     
                     with gr.Accordion("Interpolation Settings", open=False):
-                        w_start = gr.Slider(-2, 2, 0, 0.1, label="Start Weight")
-                        w_end = gr.Slider(-2, 2, 1, 0.1, label="End Weight")
-                        n_steps = gr.Slider(3, 20, 10, 1, label="Number of Steps")
-                        n_clusters = gr.Slider(5, 50, 10, 1, label="Clusters for Matching")
+                        w_start = gr.Slider(minimum=-2, maximum=2, step=0.1, value=0, label="Start Weight")
+                        w_end = gr.Slider(minimum=-2, maximum=2, step=0.1, value=1, label="End Weight")
+                        n_steps = gr.Slider(minimum=3, maximum=20, step=1, value=10, label="Number of Steps")
+                        n_clusters = gr.Slider(minimum=5, maximum=50, step=1, value=10, label="Clusters for Matching")
                         match_method = gr.Radio(
                             ["hungarian", "argmin"],
                             value="hungarian",
@@ -776,10 +776,10 @@ def create_gradio_interface():
                     reload_btn_3 = gr.Button("Load from Training Set")
                     
                     with gr.Accordion("Analogy Settings", open=False):
-                        analogy_w_start = gr.Slider(-2, 2, 0, 0.1, label="Start Weight")
-                        analogy_w_end = gr.Slider(-2, 2, 1, 0.1, label="End Weight") 
-                        analogy_n_steps = gr.Slider(3, 20, 10, 1, label="Number of Steps")
-                        analogy_n_clusters = gr.Slider(5, 50, 10, 1, label="Clusters for Matching")
+                        analogy_w_start = gr.Slider(minimum=-2, maximum=2, step=0.1, value=0, label="Start Weight")
+                        analogy_w_end = gr.Slider(minimum=-2, maximum=2, step=0.1, value=1, label="End Weight") 
+                        analogy_n_steps = gr.Slider(minimum=3, maximum=20, step=1, value=10, label="Number of Steps")
+                        analogy_n_clusters = gr.Slider(minimum=5, maximum=50, step=1, value=10, label="Clusters for Matching")
                         analogy_match_method = gr.Radio(
                             ["hungarian", "argmin"],
                             value="hungarian",

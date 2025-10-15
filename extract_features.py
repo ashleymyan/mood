@@ -173,7 +173,8 @@ def extract_dino_features(images: torch.Tensor, batch_size: int = DEFAULT_BATCH_
         torch.Tensor: DINO features of shape (N, L, D)
     """
     # Load DINO model
-    dino_model = torch.hub.load('facebookresearch/dino:main', 'dino_vits16')
+    #dino_model = torch.hub.load('facebookresearch/dino:main', 'dino_vits16')
+    dino_model = torch.hub.load('facebookresearch/dino:main', 'dino_vitb16')
     dino_model = dino_model.eval().cuda()
 
     # Process images in batches
