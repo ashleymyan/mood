@@ -747,7 +747,9 @@ def create_gradio_interface():
             # Auto-load from training images
             def load_first_two_images(training_images):
                 if training_images and len(training_images) >= 2:
-                    return training_images[0], training_images[1]
+                    processed_images = load_gradio_images_helper(training_images)
+                    if len(processed_images) >= 2:
+                        return processed_images[0], processed_images[1]
                 return None, None
             
             reload_btn.click(
@@ -788,9 +790,11 @@ def create_gradio_interface():
                     
                     analogy_btn = gr.Button("Run Analogy", variant="primary")
 
-            with gr.Row():
-                correspondence_plot = gr.Image(label="Correspondence Visualization")
-                analogy_plot = gr.Plot(label="Analogy Results")
+            # Analogy Results
+            analogy_plot = gr.Plot(label="Analogy Results")
+            
+            # Correspondence Visualization
+            correspondence_plot = gr.Image(label="Correspondence Visualization")
             
             analogy_results = gr.Gallery(
                 label="Generated Sequence",
@@ -814,21 +818,27 @@ def create_gradio_interface():
                     [a2, a1, b1], model, weights, n_clusters, 1, match_method
                 )
                 
-                return correspondence_img, result_plot, result_images
+                return result_plot, correspondence_img, result_images
             
             analogy_btn.click(
                 run_analogy,
                 inputs=[img_a1, img_b1, img_a2, model_state, analogy_w_start, analogy_w_end, 
                        analogy_n_steps, analogy_n_clusters, analogy_match_method],
-                outputs=[correspondence_plot, analogy_plot, analogy_results]
+                outputs=[analogy_plot, correspondence_plot, analogy_results]
             )
             
             # Auto-load from training images
             def load_three_images(training_images):
                 if training_images and len(training_images) >= 3:
-                    return training_images[0], training_images[1], training_images[2]
+                    processed_images = load_gradio_images_helper(training_images)
+                    if len(processed_images) >= 3:
+                        return processed_images[0], processed_images[1], processed_images[2]
+                    elif len(processed_images) >= 2:
+                        return processed_images[0], processed_images[1], processed_images[0]
                 elif training_images and len(training_images) >= 2:
-                    return training_images[0], training_images[1], training_images[0]
+                    processed_images = load_gradio_images_helper(training_images)
+                    if len(processed_images) >= 2:
+                        return processed_images[0], processed_images[1], processed_images[0]
                 return None, None, None
             
             reload_btn_3.click(
