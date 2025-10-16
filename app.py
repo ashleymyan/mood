@@ -483,11 +483,43 @@ def perform_two_image_interpolation(image1: Image.Image,
     
     return generated_images
 
+def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Image, interpolation_weights: List[float], n_clusters: int = 20, match_method: str = 'hungarian', 
+                                          use_unit_norm: bool = False, dino_matching: bool = True, seed: Optional[int] = None):
+    clip_images = torch.stack([clip_image_transform(image) for image in [image1, image2]])
+    dino_images = torch.stack([dino_image_transform(image) for image in [image1, image2]])
+    # downsample to 256x256
+    dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
+    dino_image_embeds = extract_dino_features(dino_images)
+    clip_image_embeds = extract_clip_features(clip_images)
+    input_embeds = dino_image_embeds
+
+    b, l, c = input_embeds.shape
+    joint_eigvecs, joint_rgbs = ncut_tsne_multiple_images(input_embeds, n_eig=30, gamma=None)
+    single_eigvecs = kway_cluster_per_image(input_embeds, n_clusters=n_clusters, gamma=None)
+
+    A_to_B = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], single_eigvecs[0], single_eigvecs[1], match_method=match_method)
+
+    if dino_matching:
+        direction = compute_direction_from_two_images(clip_image_embeds, single_eigvecs, A_to_B, use_unit_norm=use_unit_norm)
+    else:
+        direction = clip_image_embeds[1] - clip_image_embeds[0]
+
+    ip_model = load_ip_adapter_model()
+    
+    interpolated_images = []
+    for w in interpolation_weights:
+        A_interpolated = clip_image_embeds[0] + direction * w
+        gen_images = generate_images_from_clip_embeddings(ip_model, A_interpolated, num_samples=1, seed=seed)
+        interpolated_images.extend(gen_images)
+    
+    return interpolated_images
+
 
 # Apply HuggingFace Spaces GPU decorator if available
 if USE_HUGGINGFACE_ZEROGPU:
     perform_three_image_analogy = spaces.GPU(duration=60)(perform_three_image_analogy)
     perform_two_image_interpolation = spaces.GPU(duration=60)(perform_two_image_interpolation)
+    interpolate_two_images_no_compression = spaces.GPU(duration=60)(interpolate_two_images_no_compression)
 
 
 # ===== Visualization Functions =====

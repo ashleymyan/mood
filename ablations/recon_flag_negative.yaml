@@ -1,0 +1,3 @@
+flag_loss: 1.0
+negative_sample_loss: 1.0
+recon_loss: 1.0
