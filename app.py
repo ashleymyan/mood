@@ -359,7 +359,7 @@ def perform_three_image_analogy(image_list: List[Image.Image],
         a1_to_b1_mapping[a2_to_a1_mapping],
     ]
     correspondence_plot = get_correspondence_plot(
-        images, cluster_eigenvectors, cluster_orders, discrete_colors, hw=16 * 4, n_cols=10
+        images, cluster_eigenvectors, cluster_orders, discrete_colors, hw=16 * 2, n_cols=10
     )
     
     # Generate interpolated images
@@ -438,8 +438,8 @@ def perform_two_image_interpolation(image1: Image.Image,
     
     if use_dino_matching:
         # Use correspondence-based direction
-        joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=0.5)
-        cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=0.5)
+        joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=None)
+        cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
         
         a_to_b_mapping = match_centers_two_images(
             dino_image_embeds[0], dino_image_embeds[1],

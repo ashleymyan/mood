@@ -71,6 +71,9 @@ def _kway_cluster_single_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
     
     if gamma is None:
         gamma = find_gamma_by_degree(flattened_input, degree)
+        print(f"Using gamma: {gamma/image_embeds.var(0).sum().item()}")
+    else:
+        gamma = gamma * image_embeds.var(0).sum().item()
     
     # Calculate number of eigenvectors needed
     n_eig = min(n_clusters * 2 + 6, flattened_input.shape[0] // 2 - 1)
@@ -83,7 +86,7 @@ def _kway_cluster_single_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
     return continuous_clusters
 
 
-def kway_cluster_per_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
+def kway_cluster_per_image(image_embeds, n_clusters, gamma=None, degree=0.5):
     """
     Perform k-way clustering on each image separately.
     

@@ -94,7 +94,7 @@ def compute_eigenvector_loss(ground_truth_eigvec, predicted_eigvec, n_eig: int,
     return total_loss
 
 
-def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int, gamma: float = 0.5) -> Tuple[torch.Tensor, torch.Tensor]:
+def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int) -> Tuple[torch.Tensor, torch.Tensor]:
     """
     Wrapper function to compute NCut eigenvectors using RBF affinity.
     
@@ -106,6 +106,7 @@ def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int, gamma: float =
     Returns:
         Tuple[torch.Tensor, torch.Tensor]: Eigenvectors and eigenvalues
     """
+    gamma = features.var(0).sum().item()
     affinity_matrix = rbf_affinity(features, gamma=gamma)
     eigenvectors, eigenvalues = _plain_ncut(affinity_matrix, n_eig)
     return eigenvectors, eigenvalues
@@ -325,7 +326,7 @@ class CompressionModel(pl.LightningModule):
         # Store configuration
         self.config = config
         self.use_identity_mapping = use_identity_mapping
-        self.downsample_factor = 4
+        self.downsample_factor = 2
         
         # Build encoder-decoder architecture
         self.encoder = MultiLayerPerceptron(
@@ -382,11 +383,6 @@ class CompressionModel(pl.LightningModule):
         if self.use_identity_mapping:
             identity_reconstructed = self.identity_decoder(compressed_features)
         
-        # Initialize NCut gamma on first step
-        if self.trainer.global_step == 0:
-            #self.ncut_gamma = find_gamma_by_degree_after_fps(input_features[fg_masks], 0.1)
-            self.ncut_gamma = 1.0
-        
         # Compute NCut eigenvectors for geometric consistency
         # TODO: FIX THIS, fg_masks need to applied after eigenvector computation
         gt_eigenvectors = self._compute_ncut_eigenvectors(input_features, fg_masks)
@@ -432,9 +428,7 @@ class CompressionModel(pl.LightningModule):
         """Compute NCut eigenvectors for masked features."""
         masked_features = features[masks]
         if len(masked_features) > 0:
-            eigenvectors, _ = compute_ncut_eigenvectors(
-                masked_features, self.config.n_eig, gamma=self.ncut_gamma
-            )
+            eigenvectors, _ = compute_ncut_eigenvectors(masked_features, self.config.n_eig)
             return eigenvectors
         else:
             # Return zero tensor if no masked features
