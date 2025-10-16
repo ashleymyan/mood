@@ -30,15 +30,6 @@ def add_download_button(gallery, filename_prefix="output"):
     """
     
     def make_3x5_plot(images):
-        """
-        Create 3x4 grid plots from a list of images.
-        
-        Args:
-            images (list): List of PIL Image objects
-            
-        Returns:
-            list: List of PIL Image objects containing the grid plots
-        """
         plot_list = []
         
         # Split the list of images into chunks of 15

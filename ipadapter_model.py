@@ -24,20 +24,6 @@ from ip_adapter import IPAdapterPlus, IPAdapter
 # ===== Image Utility Functions =====
 
 def create_image_grid(images: List[Image.Image], rows: int, cols: int) -> Image.Image:
-    """
-    Create a grid of images arranged in rows and columns.
-    
-    Args:
-        images: List of PIL Images to arrange
-        rows: Number of rows in the grid
-        cols: Number of columns in the grid
-        
-    Returns:
-        PIL Image containing the grid layout
-        
-    Raises:
-        AssertionError: If number of images doesn't match rows * cols
-    """
     if len(images) != rows * cols:
         raise ValueError(f"Number of images ({len(images)}) must equal rows * cols ({rows * cols})")
 
@@ -62,12 +48,6 @@ def create_image_grid(images: List[Image.Image], rows: int, cols: int) -> Image.
 def extract_clip_embeddings_from_pil(pil_image: Union[Image.Image, List[Image.Image]], 
                                     ip_model) -> torch.Tensor:
     """
-    Extract CLIP embeddings from PIL Image(s) using IP-Adapter model.
-    
-    Args:
-        pil_image: Single PIL Image or list of PIL Images
-        ip_model: IP-Adapter model instance
-        
     Returns:
         torch.Tensor: CLIP embeddings of shape (batch_size, seq_len, embed_dim)
     """
@@ -95,14 +75,8 @@ def extract_clip_embeddings_from_pil(pil_image: Union[Image.Image, List[Image.Im
 def extract_clip_embeddings_from_pil_batch(pil_images: List[Image.Image], 
                                           ip_model) -> torch.Tensor:
     """
-    Extract CLIP embeddings from a batch of PIL Images.
-    
-    Args:
-        pil_images: List of PIL Images
-        ip_model: IP-Adapter model instance
-        
     Returns:
-        torch.Tensor: Concatenated CLIP embeddings
+        torch.Tensor: Concatenated CLIP embeddings of shape (batch, seq_len, embed_dim)
     """
     embeddings_batch = []
     
@@ -118,13 +92,6 @@ def extract_clip_embeddings_from_tensor(tensor_image: torch.Tensor,
                                        ip_model, 
                                        resize: bool = True) -> torch.Tensor:
     """
-    Extract CLIP embeddings from image tensors using IP-Adapter model.
-    
-    Args:
-        tensor_image: Input image tensor of shape (B, C, H, W)
-        ip_model: IP-Adapter model instance
-        resize: Whether to resize images to 224x224 (CLIP standard)
-        
     Returns:
         torch.Tensor: CLIP embeddings of shape (batch_size, seq_len, embed_dim)
     """
@@ -200,15 +167,6 @@ def _enhanced_get_image_embeds(self, pil_image=None, clip_image_embeds=None):
 
 @torch.inference_mode()
 def load_stable_diffusion_pipeline(device: str = "cuda") -> StableDiffusionPipeline:
-    """
-    Load a Stable Diffusion pipeline without IP-Adapter.
-    
-    Args:
-        device: Device to load the model on
-        
-    Returns:
-        StableDiffusionPipeline: Configured SD pipeline
-    """
     # Model paths
     base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
     vae_model_path = "stabilityai/sd-vae-ft-mse"
@@ -242,20 +200,6 @@ def load_stable_diffusion_pipeline(device: str = "cuda") -> StableDiffusionPipel
 
 @torch.inference_mode()
 def load_ip_adapter_model(device: str = "cuda") -> IPAdapterPlus:
-    """
-    Load IP-Adapter model with Stable Diffusion pipeline.
-    
-    This function creates a complete IP-Adapter setup including:
-    - Stable Diffusion pipeline with custom VAE
-    - CLIP image encoder for embedding extraction
-    - IP-Adapter projection layers
-    
-    Args:
-        device: Device to load the model on
-        
-    Returns:
-        IPAdapterPlus: Configured IP-Adapter model
-    """
     # Model and checkpoint paths
     base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
     vae_model_path = "stabilityai/sd-vae-ft-mse"
@@ -309,18 +253,8 @@ def generate_images_from_clip_embeddings(ip_model,
                                        num_samples: int = 4, 
                                        num_inference_steps: int = 50, 
                                        seed: Optional[int] = 42) -> List[Image.Image]:
-    """
-    Generate images from CLIP embeddings using IP-Adapter.
-    
-    Args:
-        ip_model: IP-Adapter model instance
-        clip_embeddings: CLIP embeddings tensor
-        num_samples: Number of images to generate
-        num_inference_steps: Number of denoising steps
-        seed: Random seed for reproducibility
-        
-    Returns:
-        List[Image.Image]: Generated PIL images
+    """Generate images from CLIP embeddings using IP-Adapter.
+    clip_embeddings is (batch, seq_len, embed_dim)
     """
     # Ensure embeddings have correct shape and dtype
     if clip_embeddings.ndim == 2:

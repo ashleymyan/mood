@@ -24,14 +24,7 @@ def ncut_tsne_multiple_images(image_embeds, n_eig=50, gamma=0.5, degree=0.5):
     """
     Apply NCut and t-SNE coloring to multiple image embeddings.
     
-    Args:
-        image_embeds (torch.Tensor): Image embeddings of shape (batch, length, channels)
-        n_eig (int): Number of eigenvectors to compute
-        gamma (float): NCut gamma parameter (None for auto-detection)
-        degree (float): Degree parameter for gamma auto-detection
-        
-    Returns:
-        tuple: (eigenvectors, RGB colors) both of shape (batch, length, channels)
+    image_embeds is (batch, length, channels)
     """
     batch_size, length, channels = image_embeds.shape
     flattened_input = image_embeds.flatten(end_dim=-2)
@@ -54,18 +47,6 @@ def ncut_tsne_multiple_images(image_embeds, n_eig=50, gamma=0.5, degree=0.5):
 
 
 def _kway_cluster_single_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
-    """
-    Perform k-way clustering on a single image's embeddings.
-    
-    Args:
-        image_embeds (torch.Tensor): Image embeddings of shape (length, channels)
-        n_clusters (int): Number of clusters
-        gamma (float): NCut gamma parameter
-        degree (float): Degree parameter for gamma auto-detection
-        
-    Returns:
-        torch.Tensor: Continuous cluster assignments
-    """
     length, channels = image_embeds.shape
     flattened_input = image_embeds.flatten(end_dim=-2)
     
@@ -89,14 +70,8 @@ def kway_cluster_per_image(image_embeds, n_clusters, gamma=None, degree=0.5):
     """
     Perform k-way clustering on each image separately.
     
-    Args:
-        image_embeds (torch.Tensor): Image embeddings of shape (batch, length, channels)
-        n_clusters (int): Number of clusters
-        gamma (float): NCut gamma parameter
-        degree (float): Degree parameter for gamma auto-detection
-        
-    Returns:
-        torch.Tensor: Clustered eigenvectors for each image
+    image_embeds is (length, channels)
+    return (length, clusters)
     """
     clustered_eigenvectors = []
     
@@ -113,14 +88,8 @@ def kway_cluster_multiple_images(image_embeds, n_clusters, gamma=0.5, degree=0.5
     """
     Perform k-way clustering on multiple images jointly.
     
-    Args:
-        image_embeds (torch.Tensor): Image embeddings of shape (batch, length, channels)
-        n_clusters (int): Number of clusters
-        gamma (float): NCut gamma parameter
-        degree (float): Degree parameter for gamma auto-detection
-        
-    Returns:
-        torch.Tensor: Joint clustered eigenvectors reshaped to (batch, length, clusters)
+    image_embeds is (batch, length, channels)
+    return (batch, length, clusters)
     """
     batch_size, length, channels = image_embeds.shape
     flattened_input = image_embeds.flatten(end_dim=-2)
@@ -146,16 +115,7 @@ def kway_cluster_multiple_images(image_embeds, n_clusters, gamma=0.5, degree=0.5
 # ===== Color and Visualization Functions =====
 
 def get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors):
-    """
-    Generate discrete colors for clusters based on joint coloring.
-    
-    Args:
-        joint_colors (np.ndarray): Joint RGB colors for all images
-        cluster_eigenvectors (torch.Tensor): Cluster eigenvectors
-        
-    Returns:
-        np.ndarray: Discrete RGB colors as uint8 array
-    """
+
     n_clusters = cluster_eigenvectors.shape[-1]
     discrete_colors = np.zeros_like(joint_colors)
     
@@ -181,17 +141,7 @@ def get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors):
 # ===== Center Matching Functions =====
 
 def get_cluster_center_features(image_embeds, cluster_labels, n_clusters):
-    """
-    Calculate center features for each cluster.
-    
-    Args:
-        image_embeds (torch.Tensor): Image embeddings
-        cluster_labels (np.ndarray): Cluster labels for each point
-        n_clusters (int): Number of clusters
-        
-    Returns:
-        torch.Tensor: Center features for each cluster
-    """
+
     center_features = torch.zeros((n_clusters, image_embeds.shape[-1]))
     
     for cluster_idx in range(n_clusters):
@@ -207,22 +157,12 @@ def get_cluster_center_features(image_embeds, cluster_labels, n_clusters):
 
 
 def cosine_similarity(matrix_a, matrix_b):
-    """Calculate cosine similarity between two matrices."""
     normalized_a = matrix_a / matrix_a.norm(dim=-1, keepdim=True)
     normalized_b = matrix_b / matrix_b.norm(dim=-1, keepdim=True)
     return normalized_a @ normalized_b.T
 
 
 def hungarian_match_centers(center_features1, center_features2):
-    """
-    Use Hungarian algorithm to find optimal matching between cluster centers.
-    
-    Args:
-        center_features1, center_features2 (torch.Tensor): Center features to match
-        
-    Returns:
-        np.ndarray: Column indices for optimal matching
-    """
     distances = torch.cdist(center_features1, center_features2)
     distances = distances.cpu().detach().numpy()
     
@@ -231,15 +171,6 @@ def hungarian_match_centers(center_features1, center_features2):
 
 
 def argmin_matching(center_features1, center_features2):
-    """
-    Use simple argmin matching between cluster centers.
-    
-    Args:
-        center_features1, center_features2 (torch.Tensor): Center features to match
-        
-    Returns:
-        np.ndarray: Argmin matching indices
-    """
     distances = torch.cdist(center_features1, center_features2)
     distances = distances.cpu().detach().numpy()
     return np.argmin(distances, axis=-1)
@@ -247,17 +178,6 @@ def argmin_matching(center_features1, center_features2):
 
 def match_cluster_centers(image_embed1, image_embed2, eigvec1, eigvec2, 
                          match_method='hungarian'):
-    """
-    Match cluster centers between two images.
-    
-    Args:
-        image_embed1, image_embed2 (torch.Tensor): Image embeddings
-        eigvec1, eigvec2 (torch.Tensor): Eigenvectors for clustering
-        match_method (str): Matching method ('hungarian' or 'argmin')
-        
-    Returns:
-        np.ndarray: One-to-one mapping between clusters
-    """
     cluster_labels1 = eigvec1.argmax(-1).cpu().numpy()
     cluster_labels2 = eigvec2.argmax(-1).cpu().numpy()
     n_clusters = eigvec1.shape[-1]
@@ -308,17 +228,6 @@ def match_centers_three_images(image_embeds, eigenvectors, match_method='hungari
 
 def match_centers_two_images(image_embed1, image_embed2, eigvec1, eigvec2, 
                             match_method='hungarian'):
-    """
-    Match cluster centers between two images.
-    
-    Args:
-        image_embed1, image_embed2 (torch.Tensor): Image embeddings
-        eigvec1, eigvec2 (torch.Tensor): Eigenvectors for clustering
-        match_method (str): Matching method
-        
-    Returns:
-        np.ndarray: One-to-one mapping between clusters
-    """
     return match_cluster_centers(
         image_embed1, image_embed2, eigvec1, eigvec2, match_method=match_method
     )
@@ -328,16 +237,10 @@ def match_centers_two_images(image_embed1, image_embed2, eigvec1, eigvec2,
 
 def plot_cluster_masks(image, eigenvector, cluster_order, hw=16):
     """
-    Generate cluster mask visualizations for an image.
-    
-    Args:
-        image: Input image tensor
-        eigenvector (torch.Tensor): Cluster eigenvector
-        cluster_order: Order of clusters to visualize
-        hw (int): Height/width of the feature map
-        
-    Returns:
-        list: List of PIL Images showing cluster masks
+    blend the image with the cluster masks
+    # image is (c, h, w)
+    # eigenvector is (h*w, n_eig)
+    # cluster_order is (n_eig), the order of the clusters
     """
     cluster_images = []
     base_img = img_transform_inv(image).resize(
@@ -373,20 +276,7 @@ def plot_cluster_masks(image, eigenvector, cluster_order, hw=16):
 
 def create_image_grid_row(image, eigenvector, cluster_order, discrete_colors, 
                          hw=16, n_cols=10):
-    """
-    Create a grid row for a single image showing clusters.
-    
-    Args:
-        image: Input image tensor
-        eigenvector (torch.Tensor): Cluster eigenvector
-        cluster_order: Order of clusters
-        discrete_colors (np.ndarray): Discrete RGB colors
-        hw (int): Height/width of feature map
-        n_cols (int): Number of columns in grid
-        
-    Returns:
-        list: List of image rows for grid
-    """
+
     cluster_images = plot_cluster_masks(image, eigenvector, cluster_order, hw)
     
     # Prepare base images
@@ -421,20 +311,6 @@ def create_image_grid_row(image, eigenvector, cluster_order, discrete_colors,
 
 def create_multi_image_grid(images, eigenvectors, cluster_orders, discrete_colors, 
                            hw=16, n_cols=10):
-    """
-    Create a grid for multiple images showing their clusters.
-    
-    Args:
-        images: List of input image tensors
-        eigenvectors (torch.Tensor): Cluster eigenvectors for all images
-        cluster_orders: Cluster orders for each image
-        discrete_colors (np.ndarray): Discrete colors for all images
-        hw (int): Height/width of feature map
-        n_cols (int): Number of columns in grid
-        
-    Returns:
-        list: Interleaved image rows for final grid
-    """
     all_grid_rows = []
     
     for image, eigvec, cluster_order, discrete_rgb in zip(
@@ -456,20 +332,6 @@ def create_multi_image_grid(images, eigenvectors, cluster_orders, discrete_color
 
 def get_correspondence_plot(images, eigenvectors, cluster_orders, discrete_colors, 
                            hw=16, n_cols=10):
-    """
-    Generate the final correspondence plot grid.
-    
-    Args:
-        images: List of input image tensors
-        eigenvectors (torch.Tensor): Cluster eigenvectors
-        cluster_orders: Cluster orders for each image
-        discrete_colors (np.ndarray): Discrete colors
-        hw (int): Height/width of feature map
-        n_cols (int): Number of columns in grid
-        
-    Returns:
-        PIL.Image: Final correspondence plot grid
-    """
     n_clusters = eigenvectors.shape[-1]
     n_cols = min(n_cols, n_clusters)
     

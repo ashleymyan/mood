@@ -81,12 +81,6 @@ def load_default_images() -> List[Image.Image]:
 def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List[Image.Image]:
     """
     Convert various image input formats to a list of PIL Images.
-    
-    Args:
-        pil_images: Images in various formats (PIL, paths, tuples)
-        
-    Returns:
-        List[Image.Image]: Processed PIL images in RGB format
     """
     if pil_images is None:
         return []
@@ -134,15 +128,6 @@ def train_mood_space(pil_images: List[Image.Image],
     
     Args:
         pil_images: List of PIL Images for training
-        learning_rate: Learning rate for optimization
-        training_steps: Number of training steps
-        mlp_width: Width of MLP layers
-        mlp_layers: Number of MLP layers
-        mood_dimension: Target dimensionality (auto-estimated if None)
-        config_path: Path to configuration file
-        
-    Returns:
-        Tuple of (trained_model, trainer)
     """
     # Process input images
     images = load_gradio_images_helper(pil_images)
