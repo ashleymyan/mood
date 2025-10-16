@@ -6,6 +6,7 @@ n_layer: 4
 
 n_eig: 32
 flag_loss: 1.0
+negative_sample_loss: 1.0
 eigvec_loss: 0.0
 recon_loss_fg: 1.0
 recon_loss_fg_id: 0.0

@@ -71,7 +71,6 @@ def _kway_cluster_single_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
     
     if gamma is None:
         gamma = find_gamma_by_degree(flattened_input, degree)
-        print(f"Using gamma: {gamma/image_embeds.var(0).sum().item()}")
     else:
         gamma = gamma * image_embeds.var(0).sum().item()
     

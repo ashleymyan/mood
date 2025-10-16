@@ -63,6 +63,12 @@ if USE_HUGGINGFACE_ZEROGPU:
 
 # ===== Utility Functions =====
 
+def load_config(config_path):
+    cfg_base = OmegaConf.load(DEFAULT_CONFIG_PATH)
+    cfg = OmegaConf.load(config_path)
+    cfg_base.update(cfg)
+    return cfg_base
+
 def load_default_images() -> List[Image.Image]:
     """Load default example images for the demo."""
     try:
@@ -164,7 +170,7 @@ def train_mood_space(pil_images: List[Image.Image],
         logging.info(f"Using user-specified dimension: {mood_dimension}")
 
     # Load and configure training parameters
-    config = OmegaConf.load(config_path)
+    config = load_config(config_path)
     config.mood_dim = mood_dimension
     config.lr = learning_rate
     config.steps = training_steps
@@ -176,31 +182,6 @@ def train_mood_space(pil_images: List[Image.Image],
     trainer = train_compression_model(
         model, config, dino_image_embeds, clip_image_embeds
     )
-    
-    return model, trainer
-
-
-def train_mood_space_for_visualization(image_embeds: torch.Tensor, 
-                                     target_dim: int = 2,
-                                     config_path: str = "/workspace/n25c9900_2d.yaml") -> Tuple[CompressionModel, object]:
-    """
-    Train a mood space model specifically for visualization purposes.
-    
-    Args:
-        image_embeds: Pre-extracted image embeddings
-        target_dim: Target dimensionality (typically 2 for visualization)
-        config_path: Path to visualization-specific config
-        
-    Returns:
-        Tuple of (trained_model, trainer)
-    """
-    config = OmegaConf.load(config_path)
-    config.mood_dim = target_dim
-    config.in_dim = image_embeds.shape[-1]
-    config.out_dim = image_embeds.shape[-1]
-    
-    model = CompressionModel(config, enable_gradio_progress=True)
-    trainer = train_compression_model(model, config, image_embeds, image_embeds)
     
     return model, trainer
 

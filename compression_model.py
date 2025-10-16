@@ -210,7 +210,7 @@ class SpatialPoolingCNN(nn.Module):
         downsample_factor (int): Downsampling factor for pooling
     """
     
-    def __init__(self, num_channels: int, downsample_factor: int = 4):
+    def __init__(self, num_channels: int, downsample_factor: int = 2):
         super().__init__()
         self.downsample_factor = downsample_factor
         self.conv = nn.Conv2d(
@@ -265,7 +265,69 @@ class SpatialPoolingCNN(nn.Module):
             output = output.squeeze(0)
         
         return output
+    
 
+class SpatialPoolingAvgPool(nn.Module):
+    """
+    AvgPool layer for spatial pooling of feature maps with support for sequence inputs.
+    
+    Handles inputs with CLS tokens and reshapes appropriately for 2D convolution.
+    
+    Args:
+        num_channels (int): Number of input/output channels
+        downsample_factor (int): Downsampling factor for pooling
+    """
+    def __init__(self, downsample_factor: int = 2):
+        super().__init__()
+        self.downsample_factor = downsample_factor
+        self.avg_pool = nn.AvgPool2d(downsample_factor)
+    
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Forward pass supporting both (batch, seq_len, channels) and (seq_len, channels) inputs.
+        """
+        # Handle input shape variations
+        added_batch_dim = False
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+            added_batch_dim = True
+        elif x.dim() != 3:
+            raise ValueError(f"Expected input shape (B, L, C) or (L, C), got {x.shape}")
+
+        batch_size, seq_len, channels = x.shape
+        
+        if seq_len < 2:
+            raise ValueError("Sequence length must be at least 2 (1 CLS token + 1 patch)")
+
+        # Validate that seq_len-1 is a perfect square (for spatial arrangement)
+        spatial_size = int(round((seq_len - 1) ** 0.5))
+        if spatial_size * spatial_size != (seq_len - 1):
+            raise ValueError(f"seq_len-1 must be perfect square. Got {seq_len-1}")
+
+        # Separate CLS token and spatial features
+        cls_tokens = x[:, :1, :]  # (B, 1, C)
+        spatial_features = x[:, 1:, :]  # (B, H*W, C)
+        
+        # Reshape to 2D for convolution
+        spatial_2d = rearrange(
+            spatial_features, 'b (h w) c -> b c h w', 
+            h=spatial_size, w=spatial_size
+        )
+        
+        # Apply pooling
+        pooled_features = self.avg_pool(spatial_2d)
+        
+        # Reshape back to sequence format
+        pooled_sequence = rearrange(pooled_features, 'b c h w -> b (h w) c')
+        
+        # Concatenate CLS token back
+        output = torch.cat([cls_tokens, pooled_sequence], dim=1)
+
+        # Remove batch dimension if it was added
+        if added_batch_dim:
+            output = output.squeeze(0)
+        
+        return output
 
 class MLPWithSpatialPooling(nn.Module):
     """
@@ -280,15 +342,12 @@ class MLPWithSpatialPooling(nn.Module):
     """
     
     def __init__(self, input_dim: int, output_dim: int, num_layers: int = 4, 
-                 hidden_dim: int = 4096, downsample_factor: int = 4):
+                 hidden_dim: int = 4096, downsample_factor: int = 2):
         super().__init__()
         
-        layers = [
-            nn.Linear(input_dim, hidden_dim),
-            nn.GELU(),
-            SpatialPoolingCNN(hidden_dim, downsample_factor),
-            nn.GELU()
-        ]
+        self.pooling = SpatialPoolingAvgPool(downsample_factor)
+        
+        layers = [nn.Linear(input_dim, hidden_dim), nn.GELU()]
         
         # Add hidden layers
         for _ in range(num_layers):
@@ -300,6 +359,7 @@ class MLPWithSpatialPooling(nn.Module):
         self.network = nn.Sequential(*layers)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.pooling(x)
         return self.network(x)
 
 
@@ -387,7 +447,7 @@ class CompressionModel(pl.LightningModule):
         # TODO: FIX THIS, fg_masks need to applied after eigenvector computation
         gt_eigenvectors = self._compute_ncut_eigenvectors(input_features, fg_masks)
         pred_eigenvectors = self._compute_ncut_eigenvectors(compressed_features, fg_masks)
-        
+                
         # Aggregate all loss components
         total_loss = self._compute_total_loss(
             input_features, target_features, compressed_features,
@@ -470,6 +530,34 @@ class CompressionModel(pl.LightningModule):
         # Average across scales
         return total_similarity / num_scales if num_scales > 0 else total_similarity
     
+    def _compute_negative_sample_loss(self, compressed_features: torch.Tensor, reconstructed_features: torch.Tensor) -> torch.Tensor:
+        """Compute negative sample loss."""
+        pooled_compressed = self.decoder.pooling(compressed_features)
+        pooled_compressed = pooled_compressed.flatten(0, 1)
+        reconstructed_features = reconstructed_features.flatten(0, 1)
+        dim_mins = pooled_compressed.min(0).values
+        dim_maxs = pooled_compressed.max(0).values
+        # randomly shift the grid, to have better coverage
+        dim_mins -= 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_mins)
+        dim_maxs += 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_maxs)
+        
+        num_samples = 50
+        sample_points = torch.rand(num_samples, pooled_compressed.shape[1], device=pooled_compressed.device)
+        sample_points = sample_points * (dim_maxs - dim_mins) + dim_mins
+        
+        sample_reconstructed = self.decoder.network(sample_points)
+        
+        all_compressed = torch.cat([pooled_compressed, sample_points], dim=0)
+        all_reconstructed = torch.cat([reconstructed_features, sample_reconstructed], dim=0)
+        
+        similarity = all_compressed @ all_compressed.T
+        eigenvectors, _ = compute_ncut_eigenvectors(all_reconstructed, self.config.n_eig)
+        eig_similarity = self._compute_multiscale_similarity(eigenvectors)
+        
+        loss = F.smooth_l1_loss(eig_similarity, similarity)
+        return loss
+        
+    
     def _compute_total_loss(self, input_features, target_features, compressed_features,
                            reconstructed_features, identity_reconstructed, 
                            fg_masks, downsampled_masks, gt_eigenvectors, pred_eigenvectors):
@@ -490,6 +578,12 @@ class CompressionModel(pl.LightningModule):
             self.log("loss/flag", flag_loss, prog_bar=True)
             total_loss += flag_loss * self.config.flag_loss
             self.loss_history['flag'].append(flag_loss.item())
+            
+        if self.config.negative_sample_loss > 0:
+            negative_sample_loss = self._compute_negative_sample_loss(compressed_features, reconstructed_features)
+            self.log("loss/negative_sample", negative_sample_loss, prog_bar=True)
+            total_loss += negative_sample_loss * self.config.negative_sample_loss
+            self.loss_history['negative_sample'].append(negative_sample_loss.item())
         
         # Eigenvector preservation loss
         if self.config.eigvec_loss > 0:
