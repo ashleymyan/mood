@@ -25,13 +25,13 @@ from ncut_pytorch import ncut_fn, kway_ncut
 from ncut_pytorch.ncuts.ncut_nystrom import _plain_ncut
 from ncut_pytorch.utils.math import rbf_affinity
 
-# Geometric loss functions
-from riemann_curvature_loss import (
-    compute_riemann_curvature_loss, 
-    compute_boundary_loss, 
-    compute_repulsion_loss,
-    compute_axis_align_loss
-)
+# # Geometric loss functions
+# from riemann_curvature_loss import (
+#     compute_riemann_curvature_loss, 
+#     compute_boundary_loss, 
+#     compute_repulsion_loss,
+#     compute_axis_align_loss
+# )
 
 
 # ===== Loss Functions =====
@@ -110,62 +110,6 @@ def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int) -> Tuple[torch
     affinity_matrix = rbf_affinity(features, gamma=gamma)
     eigenvectors, eigenvalues = _plain_ncut(affinity_matrix, n_eig)
     return eigenvectors, eigenvalues
-
-
-# ===== Foreground Mask Generation =====
-
-@torch.no_grad()
-def generate_foreground_mask(image_embeds: torch.Tensor, num_clusters: int = 3) -> torch.Tensor:
-    """
-    Generate foreground mask using clustering on image embeddings.
-    
-    Assumes the center of the image contains foreground objects and corners contain background.
-    
-    Args:
-        image_embeds (torch.Tensor): Image embeddings of shape (batch, length, channels)
-        num_clusters (int): Number of clusters for segmentation
-        
-    Returns:
-        torch.Tensor: Boolean foreground mask of shape (batch, length)
-    """
-    # Handle 2D input by adding batch dimension
-    if image_embeds.dim() == 2:
-        image_embeds = image_embeds.unsqueeze(0)
-    
-    batch_size, seq_len, channels = image_embeds.shape
-    hw_size = int(np.sqrt(seq_len))
-    
-    # Remove CLS token and reshape for processing
-    patch_embeds = image_embeds[:, 1:].reshape(batch_size * hw_size * hw_size, channels)
-    
-    # Compute NCut clustering
-    gamma = find_gamma_by_degree_after_fps(patch_embeds, degree=0.1)
-    eigenvectors, _ = ncut_fn(patch_embeds, n_eig=10, gamma=gamma, device='cuda')
-    
-    # Perform k-way clustering
-    cluster_onehot = kway_ncut(eigenvectors[:, :num_clusters])
-    cluster_indices = cluster_onehot.argmax(dim=-1)
-    cluster_indices = cluster_indices.reshape(batch_size, hw_size, hw_size)
-    
-    # Determine foreground based on center vs corners
-    center_clusters = cluster_indices[:, hw_size//2, hw_size//2]  # Center pixels
-    corner_clusters = torch.cat([
-        cluster_indices[:, 0, 0], cluster_indices[:, 0, -1],
-        cluster_indices[:, -1, 0], cluster_indices[:, -1, -1]
-    ])
-    
-    # Use mode to find dominant clusters
-    center_mode = center_clusters.mode().values.item()
-    
-    # Create foreground mask
-    fg_mask = cluster_indices == center_mode
-    fg_mask = fg_mask.reshape(batch_size, hw_size * hw_size)
-    
-    # Add back CLS token (always considered foreground)
-    cls_mask = torch.ones((batch_size, 1), device=fg_mask.device, dtype=torch.bool)
-    fg_mask = torch.cat([cls_mask, fg_mask], dim=1)
-    
-    return fg_mask
 
 
 # ===== Neural Network Components =====
@@ -430,68 +374,39 @@ class CompressionModel(pl.LightningModule):
             self.progress_tracker(progress, desc=f"Training, loss = {recent_loss:.4f}")
 
         # Unpack batch
-        input_features, target_features, fg_masks = batch
+        input_features, target_features = batch
         
         # Forward pass
         compressed_features = self.encoder(input_features)
         reconstructed_features = self.decoder(compressed_features)
-
-        # Prepare downsampled masks for spatial consistency
-        downsampled_masks = self._downsample_masks(fg_masks)
         
         # Optional identity mapping
         if self.use_identity_mapping:
             identity_reconstructed = self.identity_decoder(compressed_features)
         
         # Compute NCut eigenvectors for geometric consistency
-        # TODO: FIX THIS, fg_masks need to applied after eigenvector computation
-        gt_eigenvectors = self._compute_ncut_eigenvectors(input_features, fg_masks)
-        pred_eigenvectors = self._compute_ncut_eigenvectors(compressed_features, fg_masks)
-                
+        gt_eigenvectors = self._compute_ncut_eigenvectors(input_features)
+        pred_eigenvectors = self._compute_ncut_eigenvectors(compressed_features)
+        
         # Aggregate all loss components
         total_loss = self._compute_total_loss(
             input_features, target_features, compressed_features,
             reconstructed_features, identity_reconstructed if self.use_identity_mapping else None,
-            fg_masks, downsampled_masks, gt_eigenvectors, pred_eigenvectors
+            gt_eigenvectors, pred_eigenvectors
         )
         
         self.log("loss/total", total_loss, prog_bar=True)
         return total_loss
     
-    def _downsample_masks(self, fg_masks: torch.Tensor) -> torch.Tensor:
-        """Downsample foreground masks to match decoder output resolution."""
-        batch_size = fg_masks.shape[0]
-        spatial_size = int((fg_masks.shape[1] - 1) ** 0.5)
-        
-        # Reshape spatial part (excluding CLS token)
-        spatial_masks = rearrange(
-            fg_masks[:, 1:], 'b (h w) -> b h w', h=spatial_size, w=spatial_size
-        )
-        
-        # Apply max pooling for downsampling
-        downsampled_spatial = F.max_pool2d(
-            spatial_masks.unsqueeze(1).float(), 
-            kernel_size=self.downsample_factor, 
-            stride=self.downsample_factor
-        ).squeeze(1).bool()
-        
-        # Add back CLS token
-        cls_tokens = fg_masks[:, :1]
-        downsampled_masks = torch.cat([
-            cls_tokens, 
-            downsampled_spatial.reshape(batch_size, -1)
-        ], dim=1)
-        
-        return downsampled_masks
-    
-    def _compute_ncut_eigenvectors(self, features: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
-        """Compute NCut eigenvectors for masked features."""
-        masked_features = features[masks]
-        if len(masked_features) > 0:
-            eigenvectors, _ = compute_ncut_eigenvectors(masked_features, self.config.n_eig)
+    def _compute_ncut_eigenvectors(self, features: torch.Tensor) -> torch.Tensor:
+        """Compute NCut eigenvectors for features."""
+        # Flatten batch and sequence dimensions
+        flattened_features = features.flatten(0, 1)
+        if len(flattened_features) > 0:
+            eigenvectors, _ = compute_ncut_eigenvectors(flattened_features, self.config.n_eig)
             return eigenvectors
         else:
-            # Return zero tensor if no masked features
+            # Return zero tensor if no features
             return torch.zeros((1, self.config.n_eig), device=features.device)
     
     def _compute_multiscale_similarity(self, eigenvectors: torch.Tensor, 
@@ -560,7 +475,7 @@ class CompressionModel(pl.LightningModule):
     
     def _compute_total_loss(self, input_features, target_features, compressed_features,
                            reconstructed_features, identity_reconstructed, 
-                           fg_masks, downsampled_masks, gt_eigenvectors, pred_eigenvectors):
+                           gt_eigenvectors, pred_eigenvectors):
         """Compute and aggregate all loss components."""
         total_loss = 0.0
 
@@ -594,72 +509,46 @@ class CompressionModel(pl.LightningModule):
             total_loss += eigvec_loss * self.config.eigvec_loss
             self.loss_history['eigvec'].append(eigvec_loss.item())
 
-        # Foreground reconstruction loss
-        if self.config.recon_loss_fg > 0 and torch.any(downsampled_masks):
-            fg_recon_loss = F.smooth_l1_loss(
-                target_features[downsampled_masks], 
-                reconstructed_features[downsampled_masks]
+        # Reconstruction loss
+        if self.config.recon_loss > 0:
+            recon_loss = F.smooth_l1_loss(target_features, reconstructed_features)
+            self.log("loss/recon", recon_loss, prog_bar=True)
+            total_loss += recon_loss * self.config.recon_loss
+            self.loss_history['recon'].append(recon_loss.item())
+
+        # Identity mapping loss
+        if self.use_identity_mapping and self.config.recon_loss_id > 0:
+            id_loss = F.smooth_l1_loss(input_features, identity_reconstructed)
+            self.log("loss/recon_id", id_loss, prog_bar=True)
+            total_loss += id_loss * self.config.recon_loss_id
+            id_loss = F.smooth_l1_loss(
+                input_features, 
+                identity_reconstructed
             )
-            self.log("loss/recon_fg", fg_recon_loss, prog_bar=True)
-            total_loss += fg_recon_loss * self.config.recon_loss_fg
-            self.loss_history['recon'].append(fg_recon_loss.item())
+            self.log("loss/recon_id", id_loss, prog_bar=True)
+            total_loss += id_loss * self.config.recon_loss_id
 
-        # Identity mapping foreground loss
-        if (self.use_identity_mapping and 
-            self.config.recon_loss_fg_id > 0 and 
-            torch.any(fg_masks)):
-            
-            id_fg_loss = F.smooth_l1_loss(
-                input_features[fg_masks], 
-                identity_reconstructed[fg_masks]
-            )
-            self.log("loss/recon_fg_id", id_fg_loss, prog_bar=True)
-            total_loss += id_fg_loss * self.config.recon_loss_fg_id
+        # # Geometric losses on compressed features
+        # if self.config.riemann_curvature_loss > 0:
+        #     curvature_loss = compute_riemann_curvature_loss(compressed_features)
+        #     self.log("loss/riemann_curvature", curvature_loss, prog_bar=True)
+        #     total_loss += curvature_loss * self.config.riemann_curvature_loss
 
-        # Background reconstruction loss
-        if self.config.recon_loss_bg > 0 and not torch.all(downsampled_masks):
-            bg_recon_loss = F.smooth_l1_loss(
-                target_features[~downsampled_masks], 
-                reconstructed_features[~downsampled_masks]
-            )
-            self.log("loss/recon_bg", bg_recon_loss, prog_bar=True)
-            total_loss += bg_recon_loss * self.config.recon_loss_bg
+        # if self.config.axis_align_loss > 0:
+        #     axis_loss = compute_axis_align_loss(compressed_features)
+        #     self.log("loss/axis_align", axis_loss, prog_bar=True)
+        #     total_loss += axis_loss * self.config.axis_align_loss
 
-        # Identity mapping background loss
-        if (self.use_identity_mapping and 
-            self.config.recon_loss_bg_id > 0 and 
-            not torch.all(fg_masks)):
-            
-            id_bg_loss = F.smooth_l1_loss(
-                input_features[~fg_masks], 
-                identity_reconstructed[~fg_masks]
-            )
-            self.log("loss/recon_bg_id", id_bg_loss, prog_bar=True)
-            total_loss += id_bg_loss * self.config.recon_loss_bg_id
+        # if self.config.repulsion_loss > 0:
+        #     repulsion_loss = compute_repulsion_loss(compressed_features)
+        #     self.log("loss/repulsion", repulsion_loss, prog_bar=True)
+        #     total_loss += repulsion_loss * self.config.repulsion_loss
 
-        # Geometric losses on compressed features
-        fg_compressed = compressed_features[fg_masks]
-        
-        if self.config.riemann_curvature_loss > 0:
-            curvature_loss = compute_riemann_curvature_loss(fg_compressed)
-            self.log("loss/riemann_curvature", curvature_loss, prog_bar=True)
-            total_loss += curvature_loss * self.config.riemann_curvature_loss
-
-        if self.config.axis_align_loss > 0:
-            axis_loss = compute_axis_align_loss(fg_compressed)
-            self.log("loss/axis_align", axis_loss, prog_bar=True)
-            total_loss += axis_loss * self.config.axis_align_loss
-
-        if self.config.repulsion_loss > 0:
-            repulsion_loss = compute_repulsion_loss(fg_compressed)
-            self.log("loss/repulsion", repulsion_loss, prog_bar=True)
-            total_loss += repulsion_loss * self.config.repulsion_loss
-
-        if self.config.boundary_loss > 0:
-            flattened_compressed = rearrange(compressed_features, 'b l c -> (b l) c')
-            boundary_loss = compute_boundary_loss(flattened_compressed)
-            self.log("loss/boundary", boundary_loss, prog_bar=True)
-            total_loss += boundary_loss * self.config.boundary_loss
+        # if self.config.boundary_loss > 0:
+        #     flattened_compressed = rearrange(compressed_features, 'b l c -> (b l) c')
+        #     boundary_loss = compute_boundary_loss(flattened_compressed)
+        #     self.log("loss/boundary", boundary_loss, prog_bar=True)
+        #     total_loss += boundary_loss * self.config.boundary_loss
 
         return total_loss
     
@@ -677,23 +566,19 @@ class FeatureDataset(torch.utils.data.Dataset):
     Args:
         input_features (torch.Tensor): Input feature tensors
         target_features (torch.Tensor): Target feature tensors
-        foreground_masks (torch.Tensor): Foreground mask tensors
     """
     
-    def __init__(self, input_features: torch.Tensor, target_features: torch.Tensor, 
-                 foreground_masks: torch.Tensor):
+    def __init__(self, input_features: torch.Tensor, target_features: torch.Tensor):
         self.input_features = input_features
         self.target_features = target_features
-        self.foreground_masks = foreground_masks
     
     def __len__(self) -> int:
         return len(self.input_features)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
         return (
             self.input_features[idx], 
-            self.target_features[idx], 
-            self.foreground_masks[idx]
+            self.target_features[idx]
         )
 
 
@@ -708,9 +593,7 @@ def train_compression_model(model: CompressionModel,
                           config: DictConfig,
                           input_features: torch.Tensor,
                           target_features: torch.Tensor, 
-                          foreground_masks: Optional[torch.Tensor] = None,
-                          devices: List[int] = [0],
-                          compute_fg_mask: bool = False) -> pl.Trainer:
+                          devices: List[int] = [0]) -> pl.Trainer:
     """
     Train the compression model with the given data.
     
@@ -719,25 +602,15 @@ def train_compression_model(model: CompressionModel,
         config: Training configuration
         input_features: Input feature tensors
         target_features: Target feature tensors
-        foreground_masks: Optional foreground masks
         devices: GPU devices to use
-        compute_fg_mask: Whether to compute foreground masks automatically
         
     Returns:
         pl.Trainer: The trained PyTorch Lightning trainer
     """
     clear_gpu_memory()
-    
-    batch_size, seq_len, channels = input_features.shape
-
-    # Use all-ones masks if none provided (treat everything as foreground)
-    if foreground_masks is None:
-        foreground_masks = torch.ones((batch_size, seq_len), dtype=torch.bool)
-
-    # TODO: Compute foreground masks if required
 
     # Create dataset and dataloader
-    dataset = FeatureDataset(input_features, target_features, foreground_masks)
+    dataset = FeatureDataset(input_features, target_features)
     dataloader = torch.utils.data.DataLoader(
         dataset, batch_size=8, shuffle=True, num_workers=0
     )
