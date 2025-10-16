@@ -7,8 +7,10 @@ from ipadapter_model import create_image_grid
 
 path1 = "./images/jimi_portrait.jpg"
 path2 = "./images/jimi_action.jpg"
+path3 = "./images/bach_portrait.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
+image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # %%
 correspondence_plot = get_correspondence_plot_from_two_images(
     image1=image1,
@@ -19,7 +21,8 @@ correspondence_plot = get_correspondence_plot_from_two_images(
 display(correspondence_plot)
 # %%
 model, trainer = train_mood_space(
-    pil_images=[image1, image2], 
+    # pil_images=[image1, image2, image3], 
+    pil_images=[image1, image2],
     learning_rate=0.001, 
     training_steps=1000,
     mlp_width=512,

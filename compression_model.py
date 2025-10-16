@@ -236,11 +236,10 @@ class CompressionModel(pl.LightningModule):
         # sample points from the compressed feature space
         dim_mins = pooled_compressed.min(0).values
         dim_maxs = pooled_compressed.max(0).values
-        # randomly shift the grid, to have better coverage
         dim_mins -= 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_mins)
         dim_maxs += 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_maxs)
         
-        num_samples = 50
+        num_samples = self.config.n_negative_sample
         sample_points = torch.rand(num_samples, pooled_compressed.shape[1], device=pooled_compressed.device)
         sample_points = sample_points * (dim_maxs - dim_mins) + dim_mins
         
@@ -254,7 +253,6 @@ class CompressionModel(pl.LightningModule):
         similarity = all_compressed @ all_compressed.T
         eigenvectors, _ = compute_ncut_eigenvectors(all_reconstructed, self.config.n_eig)
         eig_similarity = self._compute_multiscale_similarity(eigenvectors)
-        
         loss = F.smooth_l1_loss(eig_similarity, similarity)
         return loss
         
@@ -286,10 +284,11 @@ class CompressionModel(pl.LightningModule):
         
         # Negative sample loss - encourages the model to learn the entire feature space
         if self.config.negative_sample_loss > 0:
-            negative_sample_loss = self._compute_negative_sample_loss(compressed_features, reconstructed_features)
-            self.log("loss/negative_sample", negative_sample_loss, prog_bar=True)
-            total_loss += negative_sample_loss * self.config.negative_sample_loss
-            self.loss_history['negative_sample'].append(negative_sample_loss.item())
+            if self.trainer.global_step >= 500:  # warmup period
+                negative_sample_loss = self._compute_negative_sample_loss(compressed_features, reconstructed_features)
+                self.log("loss/negative_sample", negative_sample_loss, prog_bar=True)
+                total_loss += negative_sample_loss * self.config.negative_sample_loss
+                self.loss_history['negative_sample'].append(negative_sample_loss.item())
 
         # Reconstruction loss
         if self.config.recon_loss > 0:
