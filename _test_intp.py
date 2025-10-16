@@ -2,14 +2,22 @@
 import torch
 from PIL import Image
 import numpy as np
-from app import train_mood_space, perform_two_image_interpolation
+from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images
 from ipadapter_model import create_image_grid
 
 path1 = "./images/jimi_portrait.jpg"
 path2 = "./images/jimi_action.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
-
+# %%
+correspondence_plot = get_correspondence_plot_from_two_images(
+    image1=image1,
+    image2=image2,
+    n_clusters=10,
+    match_method='hungarian'
+)
+display(correspondence_plot)
+# %%
 model, trainer = train_mood_space(
     pil_images=[image1, image2], 
     learning_rate=0.001, 

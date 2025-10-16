@@ -37,9 +37,12 @@ from dino_correspondence import (
     get_cluster_center_features
 )
 from extract_features import (
-    extract_dino_features, extract_dinov3_features, extract_clip_features,
+    extract_clip_features,
     dino_image_transform, clip_image_transform, image_inverse_transform
 )
+from extract_features import extract_dino_features
+# from extract_features import extract_dinov3_features as extract_dino_features
+
 from gradio_utils import add_download_button
 from ipadapter_model import load_ip_adapter_model, create_image_grid, generate_images_from_clip_embeddings
 from intrinsic_dim import estimate_intrinsic_dimension
@@ -304,8 +307,8 @@ def perform_three_image_analogy(image_list: List[Image.Image],
     compressed_image_embeds = model.encoder(dino_image_embeds)
     
     # Compute correspondences and clustering
-    joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=0.5)
-    cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=0.5)
+    joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=None)
+    cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
     discrete_colors = get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors)
     
     # Find cluster correspondences
@@ -368,6 +371,47 @@ def perform_three_image_analogy(image_list: List[Image.Image],
     clear_gpu_memory()
     
     return correspondence_plot, fig, generated_images
+
+
+def get_correspondence_plot_from_two_images(image1: Image.Image, image2: Image.Image, 
+                               n_clusters: int = 30,
+                               match_method: str = 'hungarian') -> Image.Image:
+    """
+    Get the correspondence plot for three images.
+    
+    Args:
+        image_list: List of three images [A2, A1, B1]
+        n_clusters: Number of clusters for correspondence matching
+        match_method: Method for cluster matching ('hungarian' or 'argmin')
+    Returns:
+        correspondence_plot: Correspondence plot
+    """
+    clear_gpu_memory()
+    
+    # Prepare images and extract features
+    images = torch.stack([dino_image_transform(image) for image in [image1, image2]])
+    dino_image_embeds = extract_dino_features(images)
+    
+    # Compute correspondences and clustering
+    joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=None)
+    cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+    discrete_colors = get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors)
+    
+    # Find cluster correspondences
+    a_to_b_mapping = match_centers_two_images(
+        dino_image_embeds[0], dino_image_embeds[1], cluster_eigenvectors[0], cluster_eigenvectors[1], match_method=match_method
+    )
+    
+    # Create correspondence visualization
+    cluster_orders = [
+        np.arange(n_clusters),
+        a_to_b_mapping
+    ]
+    correspondence_plot = get_correspondence_plot(
+        images, cluster_eigenvectors, cluster_orders, discrete_colors, hw=16 * 2, n_cols=10
+    )
+    return correspondence_plot
+    
 
 
 def perform_two_image_interpolation(image1: Image.Image, 

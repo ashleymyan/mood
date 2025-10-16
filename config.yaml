@@ -7,10 +7,7 @@ n_layer: 4
 n_eig: 32
 flag_loss: 1.0
 negative_sample_loss: 1.0
-eigvec_loss: 0.0
 recon_loss: 1.0
-
-grad_clip_val: 1.0
 
 log_dir: /tmp/logs/
 name: debug

@@ -338,7 +338,7 @@ def train_compression_model(model: CompressionModel,
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0)
     trainer = pl.Trainer(
         max_steps=config.steps,
-        gradient_clip_val=config.grad_clip_val,
+        gradient_clip_val=1.0,
         accelerator="gpu", 
         devices=devices,
         enable_checkpointing=False,
