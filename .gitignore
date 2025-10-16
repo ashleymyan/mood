@@ -1,4 +1,5 @@
 lightning_logs/
+experiments/
 .DS_Store
 .venv/
 .idea/
