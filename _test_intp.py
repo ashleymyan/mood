@@ -4,9 +4,11 @@ from PIL import Image
 import numpy as np
 from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images
 from ipadapter_model import create_image_grid
-
-path1 = "./images/jimi_portrait.jpg"
-path2 = "./images/jimi_action.jpg"
+# 
+# path1 = "./images/jimi_portrait.jpg"
+# path2 = "./images/jimi_action.jpg"
+path1 = "./images/dog1.jpg"
+path2 = "./images/fish.jpg"
 path3 = "./images/bach_portrait.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")

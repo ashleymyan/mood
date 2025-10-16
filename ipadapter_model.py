@@ -13,12 +13,12 @@ from typing import List, Optional, Union, Tuple
 import numpy as np
 import torch
 from PIL import Image
-from diffusers import StableDiffusionPipeline, DDIMScheduler, AutoencoderKL
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, DDIMScheduler, AutoencoderKL
 
 # Fix for torch 2.5.0 compatibility
 torch.backends.cuda.enable_cudnn_sdp(False)
 
-from ip_adapter import IPAdapterPlus, IPAdapter
+from ip_adapter import IPAdapterPlus, IPAdapterPlusXL
 
 
 # ===== Image Utility Functions =====
@@ -242,6 +242,21 @@ def load_ip_adapter_model(device: str = "cuda") -> IPAdapterPlus:
     # Enhance the model with our improved get_image_embeds method
     setattr(ip_model.__class__, "get_image_embeds", _enhanced_get_image_embeds)
     
+    return ip_model
+
+
+def load_ip_adapter_xl_model(device: str = "cuda") -> IPAdapterPlusXL:
+    base_model_path = "SG161222/RealVisXL_V1.0"
+    image_encoder_path = "./downloads/models/image_encoder"
+    ip_ckpt = "./downloads/sdxl_models/ip-adapter-plus_sdxl_vit-h.bin"
+
+    pipe = StableDiffusionXLPipeline.from_pretrained(
+        base_model_path,
+        torch_dtype=torch.float16,
+        add_watermarker=False,
+    )
+    ip_model = IPAdapterPlusXL(pipe, image_encoder_path, ip_ckpt, device, num_tokens=16)
+
     return ip_model
 
 

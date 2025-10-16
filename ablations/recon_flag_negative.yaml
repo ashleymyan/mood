@@ -1,4 +1,4 @@
 n_eig: 64
-flag_loss: 1.0
-negative_sample_loss: 1.0
+flag_encoder_loss: 1.0
+flag_decoder_loss: 1.0
 recon_loss: 1.0

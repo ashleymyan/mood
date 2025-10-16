@@ -225,7 +225,7 @@ class CompressionModel(pl.LightningModule):
         
         return total_similarity / num_scales if num_scales > 0 else total_similarity
     
-    def _compute_negative_sample_loss(self, compressed_features: torch.Tensor, reconstructed_features: torch.Tensor) -> torch.Tensor:
+    def _compute_flag_decoder_loss(self, compressed_features: torch.Tensor, reconstructed_features: torch.Tensor) -> torch.Tensor:
         """
         compressed_features is (batch, length, channels)
         reconstructed_features is (batch, length, channels)
@@ -267,8 +267,8 @@ class CompressionModel(pl.LightningModule):
         """
         total_loss = 0.0
 
-        # Flag space loss - preserves multi-scale spectral structure
-        if self.config.flag_loss > 0:
+        # Flag encoder loss - guide the structure from encoder to compressed features
+        if self.config.flag_encoder_loss > 0:
             # Compute ground truth similarity from eigenvectors
             gt_eigenvectors = self._compute_ncut_eigenvectors(input_features)
             gt_similarity = self._compute_multiscale_similarity(gt_eigenvectors)
@@ -277,18 +277,18 @@ class CompressionModel(pl.LightningModule):
             flattened_compressed = compressed_features.flatten(0, 1)
             pred_similarity = flattened_compressed @ flattened_compressed.T
             
-            flag_loss = F.smooth_l1_loss(gt_similarity, pred_similarity)
-            self.log("loss/flag", flag_loss, prog_bar=True)
-            total_loss += flag_loss * self.config.flag_loss
-            self.loss_history['flag'].append(flag_loss.item())
+            flag_encoder_loss = F.smooth_l1_loss(gt_similarity, pred_similarity)
+            self.log("loss/flag_encoder", flag_encoder_loss, prog_bar=True)
+            total_loss += flag_encoder_loss * self.config.flag_encoder_loss
+            self.loss_history['flag_encoder'].append(flag_encoder_loss.item())
         
-        # Negative sample loss - encourages the model to learn the entire feature space
-        if self.config.negative_sample_loss > 0:
+        # Flag decoder loss - guide the structure from compressed to decoded features
+        if self.config.flag_decoder_loss > 0:
             if self.trainer.global_step >= 500:  # warmup period
-                negative_sample_loss = self._compute_negative_sample_loss(compressed_features, reconstructed_features)
-                self.log("loss/negative_sample", negative_sample_loss, prog_bar=True)
-                total_loss += negative_sample_loss * self.config.negative_sample_loss
-                self.loss_history['negative_sample'].append(negative_sample_loss.item())
+                flag_decoder_loss = self._compute_flag_decoder_loss(compressed_features, reconstructed_features)
+                self.log("loss/flag_decoder", flag_decoder_loss, prog_bar=True)
+                total_loss += flag_decoder_loss * self.config.flag_decoder_loss
+                self.loss_history['flag_decoder'].append(flag_decoder_loss.item())
 
         # Reconstruction loss
         if self.config.recon_loss > 0:

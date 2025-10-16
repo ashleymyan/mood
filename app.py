@@ -44,7 +44,9 @@ from extract_features import extract_dino_features
 # from extract_features import extract_dinov3_features as extract_dino_features
 
 from gradio_utils import add_download_button
-from ipadapter_model import load_ip_adapter_model, create_image_grid, generate_images_from_clip_embeddings
+from ipadapter_model import create_image_grid, generate_images_from_clip_embeddings
+# from ipadapter_model import load_ip_adapter_model
+from ipadapter_model import load_ip_adapter_xl_model as load_ip_adapter_model
 from intrinsic_dim import estimate_intrinsic_dimension
 
 # Configure matplotlib for consistent styling

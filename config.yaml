@@ -5,8 +5,8 @@ latent_dim: 512
 n_layer: 4
 
 n_eig: 64
-flag_loss: 1.0
-negative_sample_loss: 0.01
+flag_encoder_loss: 1.0
+flag_decoder_loss: 0.01
 recon_loss: 1.0
 
 log_dir: /tmp/logs/
