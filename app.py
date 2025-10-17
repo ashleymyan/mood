@@ -121,7 +121,7 @@ def train_mood_space(pil_images: List[Image.Image],
                     training_steps: int = 5000, 
                     mlp_width: int = 512,
                     mlp_layers: int = 4, 
-                    n_eig: int = 8,
+                    n_eig: int = None,
                     mood_dimension: Optional[int] = None,
                     config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[CompressionModel, object]:
     """
@@ -167,7 +167,8 @@ def train_mood_space(pil_images: List[Image.Image],
     config.steps = training_steps
     config.latent_dim = mlp_width
     config.n_layer = mlp_layers
-    config.n_eig = n_eig
+    if n_eig is not None:
+        config.n_eig = n_eig
     
     # Create and train model
     model = CompressionModel(config, enable_gradio_progress=True)
@@ -358,6 +359,100 @@ def perform_three_image_analogy(image_list: List[Image.Image],
         # Generate images from interpolated embeddings
         batch_images = generate_images_from_clip_embeddings(
             ip_model, decompressed_embedding, num_samples=n_samples  
+        )
+        generated_images.extend(batch_images)
+        
+        # Add to plot
+        for i_sample in range(n_samples):
+            ax = axes[i_sample, i_w]
+            ax.imshow(batch_images[i_sample])
+            ax.axis('off')
+            if i_sample == 0:
+                ax.set_title(f"w={weight:.2f}")
+    
+    fig.tight_layout()
+    
+    # Clean up
+    del ip_model
+    clear_gpu_memory()
+    
+    return correspondence_plot, fig, generated_images
+
+
+def perform_three_image_analogy_no_compression(image_list: List[Image.Image], 
+                               interpolation_weights: List[float], 
+                               n_clusters: int = 30,
+                               n_samples: int = 1, 
+                               match_method: str = 'hungarian',
+                               config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
+    """
+    Perform three-image analogy: given A2, A1, B1, predict A2 -> B2.
+    
+    Args:
+        image_list: List of three images [A2, A1, B1]
+        model: Trained compression model
+        interpolation_weights: Interpolation weights for generation
+        n_clusters: Number of clusters for correspondence matching
+        n_samples: Number of samples to generate per weight
+        match_method: Method for cluster matching ('hungarian' or 'argmin')
+        
+    Returns:
+        Tuple of (correspondence_plot, interpolation_plot, generated_images)
+    """
+    clear_gpu_memory()
+    config = load_config(config_path)
+    # Prepare images and extract features
+    images = torch.stack([dino_image_transform(image) for image in image_list])
+    # downsample to 256x256
+    images = torch.nn.functional.interpolate(images, size=(256, 256), mode='bilinear', align_corners=False)
+    dino_image_embeds = extract_dino_features(images)
+    images = torch.stack([clip_image_transform(image) for image in image_list])
+    clip_image_embeds = extract_clip_features(images, ipadapter_version=config.ipadapter_version)
+    
+    # Compute correspondences and clustering
+    joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=None)
+    cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+    discrete_colors = get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors)
+    
+    # Find cluster correspondences
+    a2_to_a1_mapping, a1_to_b1_mapping = match_centers_three_images(
+        dino_image_embeds, cluster_eigenvectors, match_method=match_method
+    )
+    
+    # Compute direction field
+    direction_field = compute_direction_from_three_images(
+        clip_image_embeds, cluster_eigenvectors, a2_to_a1_mapping, a1_to_b1_mapping
+    )
+    
+    # Create correspondence visualization
+    cluster_orders = [
+        np.arange(n_clusters),
+        a2_to_a1_mapping,
+        a1_to_b1_mapping[a2_to_a1_mapping],
+    ]
+    correspondence_plot = None
+    
+    # Generate interpolated images
+    ip_model = load_ipadapter(version=config.ipadapter_version)
+    n_steps = len(interpolation_weights)
+    generated_images = []
+    
+    fig, axes = plt.subplots(n_samples, n_steps, figsize=(n_steps * 2, n_samples * 3))
+    if n_samples == 1:
+        axes = axes.reshape(1, -1)
+    
+    progress = gr.Progress() if 'gr' in globals() else None
+    
+    for i_w, weight in enumerate(interpolation_weights):
+        if progress:
+            progress(i_w / n_steps, desc=f"Interpolating w={weight:.2f}")
+        
+        # Interpolate in compressed space
+        interpolated_embedding = clip_image_embeds[0] + direction_field * weight
+        
+        # Generate images from interpolated embeddings
+        batch_images = generate_images_from_clip_embeddings(
+            ip_model, interpolated_embedding, num_samples=n_samples  
         )
         generated_images.extend(batch_images)
         
@@ -673,7 +768,7 @@ def create_gradio_interface():
                             label="MLP Layers", info="Network depth"
                         )
                         n_eig_slider = gr.Slider(
-                            minimum=8, maximum=64, step=8, value=8, visible=True,
+                            minimum=8, maximum=64, step=8, value=64, visible=True,
                             label="Number of Eigenvectors", info="Number of eigenvectors to used for flag loss, 8 for coarse blend, 64 for fine blend"
                         )
                     
@@ -709,6 +804,7 @@ def create_gradio_interface():
                 "Bear Analogy": ["./images/black_bear1.jpg", "./images/black_bear2.jpg", "./images/pink_bear1.jpg"],
                 "Dog → Fish": ["./images/dog1.jpg", "./images/fish.jpg"],
                 "Duck → Paper": ["./images/duck1.jpg", "./images/toilet_paper.jpg"],
+                "Portrait → Action": ["./images/jimi_portrait.jpg", "./images/jimi_action.jpg", "./images/bach_portrait.jpg"],
             }
             
             for set_name, image_paths in example_sets.items():

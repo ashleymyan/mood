@@ -25,10 +25,6 @@ from ncut_pytorch.utils.math import rbf_affinity
 import logging
 
 def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int) -> Tuple[torch.Tensor, torch.Tensor]:
-    if torch.any(torch.isnan(features)):
-        logging.warning("Features contain NaN, returning zero eigenvectors")
-        return torch.zeros((features.shape[0], n_eig), device=features.device, dtype=features.dtype), \
-               torch.zeros((features.shape[0], n_eig), device=features.device, dtype=features.dtype)
     gamma = features.var(0).sum().item()
     affinity_matrix = rbf_affinity(features, gamma=gamma)
     eigenvectors, eigenvalues = _plain_ncut(affinity_matrix, n_eig)
@@ -332,7 +328,7 @@ def clear_gpu_memory():
     gc.collect()
 
 
-def train_compression_model(model: CompressionModel, 
+def _train_compression_model(model: CompressionModel, 
                           config: DictConfig,
                           input_features: torch.Tensor,
                           target_features: torch.Tensor, 
@@ -353,3 +349,19 @@ def train_compression_model(model: CompressionModel,
     trainer.fit(model, dataloader)
     
     return trainer
+
+def train_compression_model(model: CompressionModel, 
+                            config: DictConfig,
+                            input_features: torch.Tensor,
+                            target_features: torch.Tensor, 
+                            devices: List[int] = [0]) -> pl.Trainer:
+    success = False
+    max_tries = 10
+    while not success:
+        try:
+            return _train_compression_model(model, config, input_features, target_features, devices)
+        except Exception as e:
+            logging.warning(f"Error training compression model: {e}, retrying...")
+            max_tries -= 1
+            if max_tries <= 0:
+                raise e
