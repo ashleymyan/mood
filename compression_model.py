@@ -22,8 +22,13 @@ import gradio as gr
 from ncut_pytorch.ncuts.ncut_nystrom import _plain_ncut
 from ncut_pytorch.utils.math import rbf_affinity
 
+import logging
 
 def compute_ncut_eigenvectors(features: torch.Tensor, n_eig: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    if torch.any(torch.isnan(features)):
+        logging.warning("Features contain NaN, returning zero eigenvectors")
+        return torch.zeros((features.shape[0], n_eig), device=features.device, dtype=features.dtype), \
+               torch.zeros((features.shape[0], n_eig), device=features.device, dtype=features.dtype)
     gamma = features.var(0).sum().item()
     affinity_matrix = rbf_affinity(features, gamma=gamma)
     eigenvectors, eigenvalues = _plain_ncut(affinity_matrix, n_eig)
