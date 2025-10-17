@@ -15,8 +15,7 @@ from einops import rearrange
 from torchvision import transforms
 
 from ipadapter_model import extract_clip_embedding_tensor
-# from ipadapter_model import load_ip_adapter_model as load_ipadapter
-from ipadapter_model import load_ip_adapter_xl_model as load_ipadapter
+from ipadapter_model import load_ipadapter
 
 
 # ===== Model URLs and Constants =====
@@ -242,7 +241,7 @@ def extract_dinov3_features(images: torch.Tensor,
 
 
 @torch.no_grad()
-def extract_clip_features(images: torch.Tensor, batch_size: int = DEFAULT_BATCH_SIZE) -> torch.Tensor:
+def extract_clip_features(images: torch.Tensor, batch_size: int = DEFAULT_BATCH_SIZE, ipadapter_version: str = "sd15") -> torch.Tensor:
     """
     Extract features using CLIP vision encoder.
     
@@ -254,7 +253,7 @@ def extract_clip_features(images: torch.Tensor, batch_size: int = DEFAULT_BATCH_
         torch.Tensor: CLIP features of shape (N, L, D)
     """
     # Load IP-Adapter model (contains CLIP encoder)
-    ip_adapter_model = load_ipadapter()
+    ip_adapter_model = load_ipadapter(version=ipadapter_version)
     
     # Process images in batches
     num_batches = (images.shape[0] + batch_size - 1) // batch_size

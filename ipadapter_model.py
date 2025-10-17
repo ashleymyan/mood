@@ -259,6 +259,14 @@ def load_ip_adapter_xl_model(device: str = "cuda") -> IPAdapterPlusXL:
 
     return ip_model
 
+def load_ipadapter(version: str = "sd15", device: str = "cuda") -> IPAdapterPlus | IPAdapterPlusXL:
+    if version == "sd15":
+        return load_ip_adapter_model(device)
+    elif version == "sdxl":
+        return load_ip_adapter_xl_model(device)
+    else:
+        raise ValueError(f"Invalid version: {version}")
+
 
 # ===== Image Generation Functions =====
 
@@ -304,5 +312,4 @@ extract_clip_embedding_pil = extract_clip_embeddings_from_pil
 extract_clip_embedding_pil_batch = extract_clip_embeddings_from_pil_batch
 extract_clip_embedding_tensor = extract_clip_embeddings_from_tensor
 load_sdxl = load_stable_diffusion_pipeline
-load_ipadapter = load_ip_adapter_model  
 generate = generate_images_from_clip_embeddings

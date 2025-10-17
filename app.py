@@ -45,8 +45,7 @@ from extract_features import extract_dino_features
 
 from gradio_utils import add_download_button
 from ipadapter_model import create_image_grid, generate_images_from_clip_embeddings
-# from ipadapter_model import load_ip_adapter_model
-from ipadapter_model import load_ip_adapter_xl_model as load_ip_adapter_model
+from ipadapter_model import load_ipadapter
 from intrinsic_dim import estimate_intrinsic_dimension
 
 # Configure matplotlib for consistent styling
@@ -134,6 +133,9 @@ def train_mood_space(pil_images: List[Image.Image],
     Args:
         pil_images: List of PIL Images for training
     """
+    # Load and configure training parameters
+    config = load_config(config_path)
+    
     # Process input images
     images = load_gradio_images_helper(pil_images)
     if len(images) == 0:
@@ -148,7 +150,7 @@ def train_mood_space(pil_images: List[Image.Image],
     dino_image_embeds = extract_dino_features(dino_input_images)
     
     logging.info("Extracting CLIP features...")
-    clip_image_embeds = extract_clip_features(clip_input_images)
+    clip_image_embeds = extract_clip_features(clip_input_images, ipadapter_version=config.ipadapter_version)
     
     # Determine target dimensionality
     if mood_dimension is None:
@@ -159,8 +161,6 @@ def train_mood_space(pil_images: List[Image.Image],
     else:
         logging.info(f"Using user-specified dimension: {mood_dimension}")
 
-    # Load and configure training parameters
-    config = load_config(config_path)
     config.mood_dim = mood_dimension
     config.lr = learning_rate
     config.steps = training_steps
@@ -286,7 +286,8 @@ def perform_three_image_analogy(image_list: List[Image.Image],
                                interpolation_weights: List[float], 
                                n_clusters: int = 30,
                                n_samples: int = 1, 
-                               match_method: str = 'hungarian') -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
+                               match_method: str = 'hungarian',
+                               config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
     """
     Perform three-image analogy: given A2, A1, B1, predict A2 -> B2.
     
@@ -302,7 +303,7 @@ def perform_three_image_analogy(image_list: List[Image.Image],
         Tuple of (correspondence_plot, interpolation_plot, generated_images)
     """
     clear_gpu_memory()
-    
+    config = load_config(config_path)
     # Prepare images and extract features
     images = torch.stack([dino_image_transform(image) for image in image_list])
     dino_image_embeds = extract_dino_features(images)
@@ -334,7 +335,7 @@ def perform_three_image_analogy(image_list: List[Image.Image],
     )
     
     # Generate interpolated images
-    ip_model = load_ip_adapter_model()
+    ip_model = load_ipadapter(version=config.ipadapter_version)
     n_steps = len(interpolation_weights)
     generated_images = []
     
@@ -424,7 +425,8 @@ def perform_two_image_interpolation(image1: Image.Image,
                                   match_method: str = 'hungarian',
                                   use_unit_norm: bool = False, 
                                   use_dino_matching: bool = True,
-                                  seed: Optional[int] = None) -> List[Image.Image]:
+                                  seed: Optional[int] = None,
+                                  config_path: str = DEFAULT_CONFIG_PATH) -> List[Image.Image]:
     """
     Interpolate between two images using the trained compression model.
     
@@ -441,6 +443,7 @@ def perform_two_image_interpolation(image1: Image.Image,
     Returns:
         List[Image.Image]: Generated interpolated images
     """
+    config = load_config(config_path)
     clear_gpu_memory()
     
     # Prepare images and extract features
@@ -467,7 +470,7 @@ def perform_two_image_interpolation(image1: Image.Image,
         direction_field = compressed_image_embeds[1] - compressed_image_embeds[0]
     
     # Generate interpolated images
-    ip_model = load_ip_adapter_model()
+    ip_model = load_ipadapter(version=config.ipadapter_version)
     generated_images = []
     
     for weight in interpolation_weights:
@@ -486,13 +489,14 @@ def perform_two_image_interpolation(image1: Image.Image,
     return generated_images
 
 def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Image, interpolation_weights: List[float], n_clusters: int = 20, match_method: str = 'hungarian', 
-                                          use_unit_norm: bool = False, dino_matching: bool = True, seed: Optional[int] = None):
+                                          use_unit_norm: bool = False, dino_matching: bool = True, seed: Optional[int] = None, config_path: str = DEFAULT_CONFIG_PATH):
+    config = load_config(config_path)
     clip_images = torch.stack([clip_image_transform(image) for image in [image1, image2]])
     dino_images = torch.stack([dino_image_transform(image) for image in [image1, image2]])
     # downsample to 256x256
     dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
     dino_image_embeds = extract_dino_features(dino_images)
-    clip_image_embeds = extract_clip_features(clip_images)
+    clip_image_embeds = extract_clip_features(clip_images, ipadapter_version=config.ipadapter_version)
     input_embeds = dino_image_embeds
 
     b, l, c = input_embeds.shape
@@ -506,7 +510,7 @@ def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Ima
     else:
         direction = clip_image_embeds[1] - clip_image_embeds[0]
 
-    ip_model = load_ip_adapter_model()
+    ip_model = load_ipadapter(version=config.ipadapter_version)
     
     interpolated_images = []
     for w in interpolation_weights:

@@ -12,7 +12,7 @@ recon_loss: 1.0
 log_dir: /tmp/logs/
 name: debug
 
-ipadapter_version: sd15  # sdxl, sd15
+ipadapter_version: sdxl  # sdxl, sd15
 
 steps: 1000
 batch_size: 8
