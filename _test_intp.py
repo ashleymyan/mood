@@ -20,7 +20,7 @@ correspondence_plot = get_correspondence_plot_from_two_images(
     n_clusters=10,
     match_method='hungarian'
 )
-display(correspondence_plot)
+correspondence_plot
 # %%
 config_path = "./config.yaml"
 model, trainer = train_mood_space(
@@ -49,7 +49,7 @@ all_images = [image1] + interpolated_images + [image2]
 display_size = (256, 256)
 resized_images = [img.resize(display_size, Image.Resampling.LANCZOS) for img in all_images]
 result_grid = create_image_grid(resized_images, 2, len(resized_images)//2)
-display(result_grid)
+result_grid
 
 # %%
 
