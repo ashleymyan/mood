@@ -121,6 +121,7 @@ def train_mood_space(pil_images: List[Image.Image],
                     training_steps: int = 5000, 
                     mlp_width: int = 512,
                     mlp_layers: int = 4, 
+                    n_eig: int = 8,
                     mood_dimension: Optional[int] = None,
                     config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[CompressionModel, object]:
     """
@@ -166,6 +167,7 @@ def train_mood_space(pil_images: List[Image.Image],
     config.steps = training_steps
     config.latent_dim = mlp_width
     config.n_layer = mlp_layers
+    config.n_eig = n_eig
     
     # Create and train model
     model = CompressionModel(config, enable_gradio_progress=True)
@@ -655,33 +657,37 @@ def create_gradio_interface():
                     # Training parameters
                     with gr.Accordion("Training Parameters", open=False):
                         lr_slider = gr.Slider(
-                            minimum=0.0001, maximum=0.01, step=0.0001, value=0.001,
+                            minimum=0.0001, maximum=0.01, step=0.0001, value=0.001, visible=False,
                             label="Learning Rate", info="Higher values train faster but may be unstable"
                         )
                         steps_slider = gr.Slider(
-                            minimum=1000, maximum=100000, step=100, value=1000,
+                            minimum=1000, maximum=100000, step=100, value=1000, visible=True,
                             label="Training Steps", info="More steps = better quality but slower"
                         )
                         width_slider = gr.Slider(
-                            minimum=16, maximum=4096, step=16, value=512,
+                            minimum=16, maximum=4096, step=16, value=512, visible=False,
                             label="MLP Width", info="Network capacity"
                         )
                         layers_slider = gr.Slider(
-                            minimum=1, maximum=8, step=1, value=4,
+                            minimum=1, maximum=8, step=1, value=4, visible=False,
                             label="MLP Layers", info="Network depth"
+                        )
+                        n_eig_slider = gr.Slider(
+                            minimum=8, maximum=64, step=8, value=8, visible=True,
+                            label="Number of Eigenvectors", info="Number of eigenvectors to used for flag loss, 8 for coarse blend, 64 for fine blend"
                         )
                     
                     train_button = gr.Button("Train Model", variant="primary", size="lg")
                     
                     # Training wrapper function
-                    def training_wrapper(images, lr, steps, width, layers):
+                    def training_wrapper(images, lr, steps, width, layers, n_eig):
                         """Wrapper for training that handles UI feedback."""
                         if not images or len(images) < 2:
                             gr.Error("Please upload at least 2 images for training")
                             return None, None
                         
                         try:
-                            model, trainer = train_mood_space(images, lr, steps, width, layers)
+                            model, trainer = train_mood_space(images, lr, steps, width, layers, n_eig)
                             loss_plot = plot_training_loss(model)
                             gr.Info("Training completed successfully!")
                             return model, loss_plot
@@ -692,7 +698,7 @@ def create_gradio_interface():
                     loss_plot = gr.Plot(label="Training Progress")
                     train_button.click(
                         training_wrapper,
-                        inputs=[input_images, lr_slider, steps_slider, width_slider, layers_slider],
+                        inputs=[input_images, lr_slider, steps_slider, width_slider, layers_slider, n_eig_slider],
                         outputs=[model_state, loss_plot]
                     )
 
