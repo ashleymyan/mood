@@ -31,7 +31,8 @@ for config_path in ["./ablations/n_eig_128.yaml"]:
             interpolation_weights=interpolation_weights,
             n_clusters=10, 
             match_method='hungarian',
-            use_dino_matching=True
+            use_dino_matching=True,
+            config_path=config_path
         )
         all_images = [image1] + interpolated_images + [image2]
 

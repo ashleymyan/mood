@@ -22,7 +22,7 @@ correspondence_plot = get_correspondence_plot_from_two_images(
 )
 display(correspondence_plot)
 # %%
-config_path = "./config_sdxl.yaml"
+config_path = "./config.yaml"
 model, trainer = train_mood_space(
     # pil_images=[image1, image2, image3], 
     pil_images=[image1, image2],

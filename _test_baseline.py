@@ -11,6 +11,7 @@ path2 = "./images/jimi_action.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 
+config_path = "./config.yaml"
 for i in range(3):
 
     interpolation_weights = np.linspace(0.0, 1.0, 10).tolist()
@@ -20,7 +21,8 @@ for i in range(3):
         interpolation_weights=interpolation_weights,
         n_clusters=10, 
         match_method='hungarian',
-        dino_matching=True
+        dino_matching=True,
+        config_path=config_path
     )
     all_images = [image1] + interpolated_images + [image2]
 

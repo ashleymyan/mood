@@ -271,7 +271,7 @@ def load_ipadapter(version: str = "sd15", device: str = "cuda") -> IPAdapterPlus
 # ===== Image Generation Functions =====
 
 @torch.inference_mode()
-def generate_images_from_clip_embeddings(ip_model, 
+def generate_images_from_clip_embeddings(ip_model : IPAdapterPlus,
                                        clip_embeddings: torch.Tensor,
                                        num_samples: int = 4, 
                                        num_inference_steps: int = 50, 
@@ -285,9 +285,6 @@ def generate_images_from_clip_embeddings(ip_model,
     
     if clip_embeddings.ndim != 3:
         raise ValueError(f"Expected 3D embeddings (batch, seq, dim), got {clip_embeddings.shape}")
-    
-    if clip_embeddings.shape[0] != 1:
-        raise ValueError(f"Expected batch size 1, got {clip_embeddings.shape[0]}")
     
     # Move to appropriate device and dtype
     clip_embeddings = clip_embeddings.half().to(ip_model.device)

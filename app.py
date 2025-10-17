@@ -355,7 +355,7 @@ def perform_three_image_analogy(image_list: List[Image.Image],
         
         # Generate images from interpolated embeddings
         batch_images = generate_images_from_clip_embeddings(
-            ip_model, decompressed_embedding, num_samples=n_samples
+            ip_model, decompressed_embedding, num_samples=n_samples  
         )
         generated_images.extend(batch_images)
         
@@ -471,8 +471,8 @@ def perform_two_image_interpolation(image1: Image.Image,
     
     # Generate interpolated images
     ip_model = load_ipadapter(version=config.ipadapter_version)
-    generated_images = []
     
+    generated_images = []
     for weight in interpolation_weights:
         interpolated_embedding = compressed_image_embeds[0] + direction_field * weight
         decompressed_embedding = model.decoder(interpolated_embedding)
