@@ -5,20 +5,24 @@ import numpy as np
 from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images
 from ipadapter_model import create_image_grid
 # 
-path1 = "./images/jimi_portrait.jpg"
-path2 = "./images/jimi_action.jpg"
+# path1 = "./images/jimi_portrait.jpg"
+# path2 = "./images/jimi_action.jpg"
+# path3 = "./images/jimi_action.jpg"
+# path4 = "./images/violin.jpg"
 # path1 = "./images/dog1.jpg"
 # path2 = "./images/fish.jpg"
-path3 = "./images/jimi_action.jpg"
-path4 = "./images/violin.jpg"
+path1 = "./images/input_cat.png"
+path2 = "./images/input_bread.png"
+# path1 = "./images/duck1.jpg"
+# path2 = "./images/toilet_paper.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
-image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
-image4 = Image.open(path4).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
+# image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
+# image4 = Image.open(path4).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # %%
 correspondence_plot = get_correspondence_plot_from_two_images(
-    image1=image3,
-    image2=image4,
+    image1=image1,
+    image2=image2,
     n_clusters=10,
     match_method='hungarian'
 )
@@ -32,9 +36,10 @@ model, trainer = train_mood_space(
     training_steps=1000,
     mlp_width=512,
     mlp_layers=4,
-    config_path=config_path
+    config_path=config_path,
+    n_eig=64,
 )
-
+#%%
 interpolation_weights = np.linspace(0.0, 1.0, 10).tolist()
 interpolated_images = perform_two_image_interpolation(
     image1=image1, 
