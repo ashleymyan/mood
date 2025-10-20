@@ -1,4 +1,6 @@
 # %%
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 from PIL import Image
 import numpy as np
@@ -19,9 +21,9 @@ image4 = Image.open(path4).resize((512, 512), resample=Image.Resampling.LANCZOS)
 grid = create_image_grid([image1, image2, image3], 1, 3)
 grid
 # %%
-config_path = "./config.yaml"
+config_path = "./config_eigvec_loss.yaml"
 model, trainer = train_mood_space(
-    pil_images=[image1, image2], 
+    pil_images=[image1, image2, image3], 
     training_steps=1000,
     config_path=config_path,
 )

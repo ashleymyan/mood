@@ -19,6 +19,8 @@ from einops import rearrange
 from omegaconf import DictConfig
 import gradio as gr
 
+from geometric_loss import compute_repulsion_loss, compute_boundary_loss
+
 from ncut_pytorch.ncuts.ncut_nystrom import _plain_ncut
 from ncut_pytorch.utils.math import rbf_affinity
 
@@ -267,6 +269,22 @@ class CompressionModel(pl.LightningModule):
         reconstructed_features is (batch, length, channels)
         """
         total_loss = 0.0
+        
+        if self.config.eigvec_loss > 0:
+            gt_eigenvectors = self._compute_ncut_eigenvectors(input_features)
+            hat_eigenvectors = self._compute_ncut_eigenvectors(compressed_features)
+            loss = 0
+            n_eig = 2
+            while n_eig <= self.config.n_eig:
+                left = gt_eigenvectors[:, :n_eig]
+                right = hat_eigenvectors[:, :n_eig]
+                left = left @ left.T
+                right = right @ right.T
+                loss += F.smooth_l1_loss(left, right)
+                n_eig *= 2
+            self.log("loss/eigvec", loss, prog_bar=True)
+            total_loss += loss * self.config.eigvec_loss
+            self.loss_history['eigvec'].append(loss.item())
 
         # Flag encoder loss - guide the structure from encoder to compressed features
         if self.config.flag_encoder_loss > 0:
@@ -298,6 +316,19 @@ class CompressionModel(pl.LightningModule):
             total_loss += recon_loss * self.config.recon_loss
             self.loss_history['recon'].append(recon_loss.item())
 
+
+        if self.config.repulsion_loss > 0:
+            flattened_compressed = rearrange(compressed_features, 'b l c -> (b l) c')
+            repulsion_loss = compute_repulsion_loss(flattened_compressed)
+            self.log("loss/repulsion", repulsion_loss, prog_bar=True)
+            total_loss += repulsion_loss * self.config.repulsion_loss
+
+        if self.config.boundary_loss > 0:
+            flattened_compressed = rearrange(compressed_features, 'b l c -> (b l) c')
+            boundary_loss = compute_boundary_loss(flattened_compressed)
+            self.log("loss/boundary", boundary_loss, prog_bar=True)
+            total_loss += boundary_loss * self.config.boundary_loss
+
         return total_loss
     
     def configure_optimizers(self):
@@ -328,7 +359,7 @@ def clear_gpu_memory():
     gc.collect()
 
 
-def _train_compression_model(model: CompressionModel, 
+def train_compression_model(model: CompressionModel, 
                           config: DictConfig,
                           input_features: torch.Tensor,
                           target_features: torch.Tensor, 
@@ -350,18 +381,18 @@ def _train_compression_model(model: CompressionModel,
     
     return trainer
 
-def train_compression_model(model: CompressionModel, 
-                            config: DictConfig,
-                            input_features: torch.Tensor,
-                            target_features: torch.Tensor, 
-                            devices: List[int] = [0]) -> pl.Trainer:
-    success = False
-    max_tries = 10
-    while not success:
-        try:
-            return _train_compression_model(model, config, input_features, target_features, devices)
-        except Exception as e:
-            logging.warning(f"Error training compression model: {e}, retrying...")
-            max_tries -= 1
-            if max_tries <= 0:
-                raise e
+# def train_compression_model(model: CompressionModel, 
+#                             config: DictConfig,
+#                             input_features: torch.Tensor,
+#                             target_features: torch.Tensor, 
+#                             devices: List[int] = [0]) -> pl.Trainer:
+#     success = False
+#     max_tries = 10
+#     while not success:
+#         try:
+#             return _train_compression_model(model, config, input_features, target_features, devices)
+#         except Exception as e:
+#             logging.warning(f"Error training compression model: {e}, retrying...")
+#             max_tries -= 1
+#             if max_tries <= 0:
+#                 raise e

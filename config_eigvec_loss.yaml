@@ -1,0 +1,8 @@
+n_eig: 64
+flag_encoder_loss: 0.0
+flag_decoder_loss: 0.0
+recon_loss: 1.0
+
+eigvec_loss: 1.0
+repulsion_loss: 0.0001
+boundary_loss: 0.1

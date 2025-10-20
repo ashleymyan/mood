@@ -28,7 +28,7 @@ correspondence_plot = get_correspondence_plot_from_two_images(
 )
 correspondence_plot
 # %%
-config_path = "./config.yaml"
+config_path = "./config_eigvec_loss.yaml"
 model, trainer = train_mood_space(
     # pil_images=[image1, image2, image3], 
     pil_images=[image1, image2],
