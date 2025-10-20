@@ -9,14 +9,16 @@ path1 = "./images/jimi_portrait.jpg"
 path2 = "./images/jimi_action.jpg"
 # path1 = "./images/dog1.jpg"
 # path2 = "./images/fish.jpg"
-path3 = "./images/bach_portrait.jpg"
+path3 = "./images/jimi_action.jpg"
+path4 = "./images/violin.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
+image4 = Image.open(path4).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # %%
 correspondence_plot = get_correspondence_plot_from_two_images(
-    image1=image1,
-    image2=image2,
+    image1=image3,
+    image2=image4,
     n_clusters=10,
     match_method='hungarian'
 )

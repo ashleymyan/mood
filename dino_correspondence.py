@@ -20,7 +20,7 @@ from ncut_pytorch.utils.gamma import find_gamma_by_degree
 
 # ===== Core NCut and Clustering Functions =====
 
-def ncut_tsne_multiple_images(image_embeds, n_eig=50, gamma=0.5, degree=0.5):
+def ncut_tsne_multiple_images(image_embeds, n_eig=50, gamma=None, degree=0.5):
     """
     Apply NCut and t-SNE coloring to multiple image embeddings.
     
@@ -46,7 +46,7 @@ def ncut_tsne_multiple_images(image_embeds, n_eig=50, gamma=0.5, degree=0.5):
     return eigenvectors, rgb_colors
 
 
-def _kway_cluster_single_image(image_embeds, n_clusters, gamma=0.5, degree=0.5):
+def _kway_cluster_single_image(image_embeds, n_clusters, gamma=None, degree=0.5):
     length, channels = image_embeds.shape
     flattened_input = image_embeds.flatten(end_dim=-2)
     
@@ -70,8 +70,8 @@ def kway_cluster_per_image(image_embeds, n_clusters, gamma=None, degree=0.5):
     """
     Perform k-way clustering on each image separately.
     
-    image_embeds is (length, channels)
-    return (length, clusters)
+    image_embeds is (batch, length, channels)
+    return (batch, length, clusters)
     """
     clustered_eigenvectors = []
     
@@ -84,7 +84,7 @@ def kway_cluster_per_image(image_embeds, n_clusters, gamma=None, degree=0.5):
     return torch.stack(clustered_eigenvectors)
 
 
-def kway_cluster_multiple_images(image_embeds, n_clusters, gamma=0.5, degree=0.5):
+def kway_cluster_multiple_images(image_embeds, n_clusters, gamma=None, degree=0.5):
     """
     Perform k-way clustering on multiple images jointly.
     

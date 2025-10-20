@@ -34,7 +34,8 @@ from dino_correspondence import (
     get_correspondence_plot, ncut_tsne_multiple_images, 
     kway_cluster_per_image, get_discrete_colors_from_clusters, 
     match_centers_three_images, match_centers_two_images, 
-    get_cluster_center_features
+    get_cluster_center_features,
+    hungarian_match_centers
 )
 from extract_features import (
     extract_clip_features,
@@ -238,7 +239,8 @@ def compute_direction_from_three_images(image_embeds: torch.Tensor,
 def compute_direction_from_two_images(image_embeds: torch.Tensor, 
                                     eigenvectors: torch.Tensor,
                                     a_to_b_mapping: np.ndarray, 
-                                    use_unit_norm: bool = False) -> torch.Tensor:
+                                    use_unit_norm: bool = False,
+                                    return_direction_vectors: bool = False) -> torch.Tensor:
     """
     Compute direction vectors for two-image interpolation.
     
@@ -270,6 +272,9 @@ def compute_direction_from_two_images(image_embeds: torch.Tensor,
         direction_vectors.append(direction)
     direction_vectors = torch.stack(direction_vectors)
     
+    if return_direction_vectors:
+        return direction_vectors
+    
     # Apply direction based on cluster assignments
     cluster_labels = eigenvectors[0].argmax(-1).cpu()
     direction_field = torch.zeros_like(image_embeds[0])
@@ -284,6 +289,110 @@ def compute_direction_from_two_images(image_embeds: torch.Tensor,
 
 # ===== Main Application Functions =====
 
+def decoded_clip_space_analogy(image_list: List[Image.Image], 
+                                model: CompressionModel,
+                                interpolation_weights: List[float], 
+                                n_clusters: int = 100,
+                                n_clusters2: int = 30,
+                                skip_a1a2_matching: bool = True,
+                                use_a1a2_pertoken_matching: bool = False,
+                                use_a1a2_dino_matching: bool = True,
+                                n_samples: int = 1, 
+                                match_method: str = 'hungarian',
+                                config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
+    # images: [A2, A1, B1]
+    clear_gpu_memory()
+    config = load_config(config_path)
+    images = torch.stack([dino_image_transform(image) for image in image_list[1:]])  # [A1, B1]
+    dino_image_embeds = extract_dino_features(images)  # [A1, B1]
+    
+    dino_eigvec = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None) # dino matching for A1 and B1
+    
+    # blend from A1 to B1
+    a1_to_b1_mapping = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], dino_eigvec[0], dino_eigvec[1], match_method=match_method)
+    
+    m_embeds = model.encoder(dino_image_embeds)
+    decode_clip_embeds = model.decoder(m_embeds)
+    
+    direction_field = compute_direction_from_two_images(
+        m_embeds, dino_eigvec, a1_to_b1_mapping, False
+    )  # A1 -> B1
+    
+    a1_directions = []
+    for weight in interpolation_weights:
+        interpolated_embedding = m_embeds[0] + direction_field * weight
+        decompressed = model.decoder(interpolated_embedding)
+        direction = decompressed - decode_clip_embeds[0]  # from A1
+        a1_directions.append(direction)
+    a1_directions = torch.stack(a1_directions)  # saved for lifting to A2
+    
+    
+    # # lift direction field (A1 -> B1) to A2
+    # if use_a1a2_dino_matching:
+    #     dino_images = torch.stack([dino_image_transform(image) for image in image_list[:2]])
+    #     dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
+    #     dino_image_embeds = extract_dino_features(dino_images)  # [A2, A1]
+    #     dino_eigvec = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters2, gamma=None)
+    #     a2_to_a1_mapping = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], dino_eigvec[0], dino_eigvec[1], match_method=match_method)
+    #     a2_directions = []
+    #     for a1_direction in a1_directions:
+    #         # upsample a1_direction from (1+16*16) to (1+32*32)
+    #         def resample_direction(direction, size_from, size_to, mode='nearest'):
+    #             cls_direction = direction[0].unsqueeze(0)
+    #             patch_direction = direction[1:]
+    #             patch_direction = patch_direction.view(size_from, size_from, -1)
+    #             patch_direction = rearrange(patch_direction, 'h w c -> c h w').unsqueeze(0)
+    #             patch_direction = torch.nn.functional.interpolate(patch_direction, size=(size_to, size_to), mode=mode)
+    #             patch_direction = rearrange(patch_direction, 'b c h w -> b (h w) c').squeeze(0)
+    #             direction = torch.cat([cls_direction, patch_direction], dim=0)
+    #             return direction
+    #         # a1_direction = resample_direction(a1_direction, 16, 32, mode='nearest')
+    #         # direction is defined in clip space, on A1
+    #         a2_direction = torch.zeros_like(a1_direction)
+    #         for i_a2, i_a1 in enumerate(a2_to_a1_mapping):
+    #             i_a2_mask = dino_eigvec[0].argmax(-1) == i_a2
+    #             i_a1_mask = dino_eigvec[1].argmax(-1) == i_a1
+    #             if i_a1_mask.sum() > 0:
+    #                 a2_direction[i_a2_mask] = a1_direction[i_a1_mask].mean(dim=0)
+    #         # downsample a2_direction from (1+32*32) to (1+16*16)
+    #         # a2_direction = resample_direction(a2_direction, 32, 16, mode='bilinear')
+    #         a2_directions.append(a2_direction)
+    #         print(a2_direction.norm(1).mean())
+    #     a2_directions = torch.stack(a2_directions)
+    
+    # if use_a1a2_pertoken_matching:
+    #     dino_images = torch.stack([dino_image_transform(image) for image in image_list[:2]])
+    #     dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
+    #     dino_image_embeds = extract_dino_features(dino_images)  # [A2, A1]
+    #     dino_eigvec, _ = ncut_tsne_multiple_images(dino_image_embeds, n_eig=20)
+    #     # a2_to_a1_mapping = hungarian_match_centers(dino_eigvec[0, 1:], dino_eigvec[1, 1:]) + 1
+    #     a2_to_a1_mapping = hungarian_match_centers(dino_image_embeds[0, 1:], dino_image_embeds[1, 1:]) + 1
+    #     a2_to_a1_mapping = np.concatenate([np.array([0]), a2_to_a1_mapping])
+    #     a2_directions = torch.index_select(a1_directions, 1, torch.tensor(a2_to_a1_mapping))
+        
+        
+    
+    if skip_a1a2_matching:
+        a2_directions = a1_directions
+    
+    a2_clip = extract_clip_features(clip_image_transform(image_list[0]).unsqueeze(0), 
+                                    ipadapter_version=config.ipadapter_version)
+    a2_clip = a2_clip.squeeze(0)
+    # generate images from interpolated A2 clip embeddings
+    ip_model = load_ipadapter(version=config.ipadapter_version)
+    
+    generated_images = []
+    for direction in a2_directions:
+        gen_images= generate_images_from_clip_embeddings(
+            ip_model, a2_clip + direction, num_samples=n_samples
+        )
+        generated_images.extend(gen_images)
+    
+    del ip_model
+    clear_gpu_memory()
+    
+    return generated_images
+    
 def perform_three_image_analogy(image_list: List[Image.Image], 
                                model: CompressionModel,
                                interpolation_weights: List[float], 
