@@ -21,21 +21,22 @@ image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS)
 # %%
 config_path = "./config.yaml"
 # %%
-interpolation_weights = np.linspace(0.0, 3.0, 30).tolist()
-correspondence_plot, fig, interpolated_images = perform_three_image_analogy_no_compression(
-    image_list=[image3, image1, image2], 
-    interpolation_weights=interpolation_weights,
-    n_clusters=20,
-    match_method='hungarian',
-    config_path=config_path,
-)
-all_images = interpolated_images
+for _ in range(10):
+    interpolation_weights = np.linspace(0.0, 2.0, 10).tolist()
+    correspondence_plot, fig, interpolated_images = perform_three_image_analogy_no_compression(
+        image_list=[image3, image1, image2], 
+        interpolation_weights=interpolation_weights,
+        n_clusters=20,
+        match_method='hungarian',
+        config_path=config_path,
+    )
+    all_images = interpolated_images
 
-display_size = (256, 256)
-resized_images = [img.resize(display_size, Image.Resampling.LANCZOS) for img in all_images]
-result_grid = create_image_grid(resized_images, 5, len(resized_images)//5)
-plt.close()
-display(result_grid)
+    display_size = (256, 256)
+    resized_images = [img.resize(display_size, Image.Resampling.LANCZOS) for img in all_images]
+    result_grid = create_image_grid(resized_images, 1, len(resized_images)//1)
+    plt.close()
+    display(result_grid)
 # result_grid.save("./analogy.jpg")
 # %%
 # interpolation_weights = np.linspace(0.0, 1.0, 10).tolist()

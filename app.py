@@ -622,6 +622,34 @@ def get_correspondence_plot_from_two_images(image1: Image.Image, image2: Image.I
     return correspondence_plot
     
 
+def get_correspondence_plot_from_multiple_images(image_list: List[Image.Image], 
+                                                n_clusters: int = 30,
+                                                match_method: str = 'hungarian') -> Image.Image:
+    clear_gpu_memory()
+    
+    # Prepare images and extract features
+    images = torch.stack([dino_image_transform(image) for image in image_list])
+    dino_image_embeds = extract_dino_features(images)
+    
+    # Compute correspondences and clustering
+    joint_eigenvectors, joint_colors = ncut_tsne_multiple_images(dino_image_embeds, n_eig=30, gamma=None)
+    cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+    discrete_colors = get_discrete_colors_from_clusters(joint_colors, cluster_eigenvectors)
+    
+    cluster_orders = [
+    ]
+    for i in range(len(image_list)):
+        matching = match_centers_two_images(
+            dino_image_embeds[0], dino_image_embeds[i], cluster_eigenvectors[0], cluster_eigenvectors[i], match_method=match_method
+        )
+        cluster_orders.append(matching)
+    cluster_orders = np.array(cluster_orders)
+    
+    correspondence_plot = get_correspondence_plot(
+        images, cluster_eigenvectors, cluster_orders, discrete_colors, hw=16 * 2, n_cols=10
+    )
+    return correspondence_plot
+
 
 def perform_two_image_interpolation(image1: Image.Image, 
                                   image2: Image.Image,

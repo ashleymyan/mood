@@ -2,31 +2,31 @@
 import torch
 from PIL import Image
 import numpy as np
-from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images
+from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images, get_correspondence_plot_from_multiple_images
 from ipadapter_model import create_image_grid
 # 
-# path1 = "./images/jimi_portrait.jpg"
-# path2 = "./images/jimi_action.jpg"
-# path3 = "./images/jimi_action.jpg"
+path1 = "./images/jimi_portrait.jpg"
+path2 = "./images/jimi_action.jpg"
+path3 = "./images/bach_portrait.jpg"
 # path4 = "./images/violin.jpg"
 # path1 = "./images/dog1.jpg"
 # path2 = "./images/fish.jpg"
-path1 = "./images/input_cat.png"
-path2 = "./images/input_bread.png"
+# path1 = "./images/input_cat.png"
+# path2 = "./images/input_bread.png"
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
-# image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
+image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # image4 = Image.open(path4).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # %%
-correspondence_plot = get_correspondence_plot_from_two_images(
-    image1=image1,
-    image2=image2,
-    n_clusters=10,
-    match_method='hungarian'
-)
-correspondence_plot
+for _ in range(10): 
+    correspondence_plot = get_correspondence_plot_from_multiple_images(
+        image_list=[image1, image2, image3],
+        n_clusters=10,
+        match_method='argmin'
+    )
+    display(correspondence_plot)
 # %%
 config_path = "./config_eigvec_loss.yaml"
 model, trainer = train_mood_space(
