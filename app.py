@@ -327,38 +327,38 @@ def decoded_clip_space_analogy(image_list: List[Image.Image],
     a1_directions = torch.stack(a1_directions)  # saved for lifting to A2
     
     
-    # # lift direction field (A1 -> B1) to A2
-    # if use_a1a2_dino_matching:
-    #     dino_images = torch.stack([dino_image_transform(image) for image in image_list[:2]])
-    #     dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
-    #     dino_image_embeds = extract_dino_features(dino_images)  # [A2, A1]
-    #     dino_eigvec = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters2, gamma=None)
-    #     a2_to_a1_mapping = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], dino_eigvec[0], dino_eigvec[1], match_method=match_method)
-    #     a2_directions = []
-    #     for a1_direction in a1_directions:
-    #         # upsample a1_direction from (1+16*16) to (1+32*32)
-    #         def resample_direction(direction, size_from, size_to, mode='nearest'):
-    #             cls_direction = direction[0].unsqueeze(0)
-    #             patch_direction = direction[1:]
-    #             patch_direction = patch_direction.view(size_from, size_from, -1)
-    #             patch_direction = rearrange(patch_direction, 'h w c -> c h w').unsqueeze(0)
-    #             patch_direction = torch.nn.functional.interpolate(patch_direction, size=(size_to, size_to), mode=mode)
-    #             patch_direction = rearrange(patch_direction, 'b c h w -> b (h w) c').squeeze(0)
-    #             direction = torch.cat([cls_direction, patch_direction], dim=0)
-    #             return direction
-    #         # a1_direction = resample_direction(a1_direction, 16, 32, mode='nearest')
-    #         # direction is defined in clip space, on A1
-    #         a2_direction = torch.zeros_like(a1_direction)
-    #         for i_a2, i_a1 in enumerate(a2_to_a1_mapping):
-    #             i_a2_mask = dino_eigvec[0].argmax(-1) == i_a2
-    #             i_a1_mask = dino_eigvec[1].argmax(-1) == i_a1
-    #             if i_a1_mask.sum() > 0:
-    #                 a2_direction[i_a2_mask] = a1_direction[i_a1_mask].mean(dim=0)
-    #         # downsample a2_direction from (1+32*32) to (1+16*16)
-    #         # a2_direction = resample_direction(a2_direction, 32, 16, mode='bilinear')
-    #         a2_directions.append(a2_direction)
-    #         print(a2_direction.norm(1).mean())
-    #     a2_directions = torch.stack(a2_directions)
+    # lift direction field (A1 -> B1) to A2
+    if use_a1a2_dino_matching:
+        dino_images = torch.stack([dino_image_transform(image) for image in image_list[:2]])
+        dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
+        dino_image_embeds = extract_dino_features(dino_images)  # [A2, A1]
+        dino_eigvec = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters2, gamma=None)
+        a2_to_a1_mapping = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], dino_eigvec[0], dino_eigvec[1], match_method=match_method)
+        a2_directions = []
+        for a1_direction in a1_directions:
+            # upsample a1_direction from (1+16*16) to (1+32*32)
+            def resample_direction(direction, size_from, size_to, mode='nearest'):
+                cls_direction = direction[0].unsqueeze(0)
+                patch_direction = direction[1:]
+                patch_direction = patch_direction.view(size_from, size_from, -1)
+                patch_direction = rearrange(patch_direction, 'h w c -> c h w').unsqueeze(0)
+                patch_direction = torch.nn.functional.interpolate(patch_direction, size=(size_to, size_to), mode=mode)
+                patch_direction = rearrange(patch_direction, 'b c h w -> b (h w) c').squeeze(0)
+                direction = torch.cat([cls_direction, patch_direction], dim=0)
+                return direction
+            # a1_direction = resample_direction(a1_direction, 16, 32, mode='nearest')
+            # direction is defined in clip space, on A1
+            a2_direction = torch.zeros_like(a1_direction)
+            for i_a2, i_a1 in enumerate(a2_to_a1_mapping):
+                i_a2_mask = dino_eigvec[0].argmax(-1) == i_a2
+                i_a1_mask = dino_eigvec[1].argmax(-1) == i_a1
+                if i_a1_mask.sum() > 0:
+                    a2_direction[i_a2_mask] = a1_direction[i_a1_mask].mean(dim=0)
+            # downsample a2_direction from (1+32*32) to (1+16*16)
+            # a2_direction = resample_direction(a2_direction, 32, 16, mode='bilinear')
+            a2_directions.append(a2_direction)
+            print(a2_direction.norm(1).mean())
+        a2_directions = torch.stack(a2_directions)
     
     # if use_a1a2_pertoken_matching:
     #     dino_images = torch.stack([dino_image_transform(image) for image in image_list[:2]])
