@@ -11,8 +11,8 @@ from ipadapter_model import create_image_grid
 # path4 = "./images/violin.jpg"
 # path1 = "./images/dog1.jpg"
 # path2 = "./images/fish.jpg"
-path1 = "./images/input_cat3.png"
-path2 = "./images/input_bread.png"
+path1 = "./images/playviolin.png"
+path2 = "./images/playguitar.png"
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
@@ -35,10 +35,10 @@ model, trainer = train_mood_space(
     mlp_width=512,
     mlp_layers=4,
     config_path=config_path,
-    n_eig=2,
+    n_eig=64,
 )
 #%%
-interpolation_weights = np.linspace(0.3, 0.7, 10).tolist()
+interpolation_weights = np.linspace(0., 1.0, 10).tolist()
 interpolated_images = perform_two_image_interpolation(
     image1=image1, 
     image2=image2, 
