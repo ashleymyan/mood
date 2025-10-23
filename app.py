@@ -347,8 +347,7 @@ def method2_analogy(image_list: List[Image.Image],
                                 interpolation_weights: List[float], 
                                 n_clusters: int = 100,
                                 n_clusters2: int = 30,
-                                skip_a1a2_matching: bool = True,
-                                use_a1a2_pertoken_matching: bool = False,
+                                skip_a1a2_matching: bool = False,
                                 use_a1a2_dino_matching: bool = True,
                                 n_samples: int = 1, 
                                 match_method: str = 'hungarian',
@@ -450,7 +449,7 @@ def method2_analogy(image_list: List[Image.Image],
 def method2_analogy_multi_corr(image_list: List[Image.Image], 
                                                 model: CompressionModel,
                                                 interpolation_weights: List[float], 
-                                                skip_a1a2_matching: bool = True,
+                                                skip_a1a2_matching: bool = False,
                                                 n_samples: int = 1, 
                                                 config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
     # images: [A2, A1, B1]
@@ -595,9 +594,8 @@ def perform_three_image_analogy(image_list: List[Image.Image],
 
 
 def method2_analogy_multi_corr_no_compression(image_list: List[Image.Image], 
-                                                model: CompressionModel,
                                                 interpolation_weights: List[float], 
-                                                skip_a1a2_matching: bool = True,
+                                                skip_a1a2_matching: bool = False,
                                                 n_samples: int = 1, 
                                                 config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
     # images: [A2, A1, B1]
