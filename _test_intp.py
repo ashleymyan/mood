@@ -11,10 +11,12 @@ from ipadapter_model import create_image_grid
 # path4 = "./images/violin.jpg"
 # path1 = "./images/dog1.jpg"
 # path2 = "./images/fish.jpg"
-path1 = "./images/playviolin.png"
-path2 = "./images/playguitar.png"
+# path1 = "./images/playviolin.png"
+# path2 = "./images/playguitar.png"
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
+path1 = "./images/input_cat.png"
+path2 = "./images/input_bread.png"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # image3 = Image.open(path3).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
@@ -46,6 +48,7 @@ interpolated_images = perform_two_image_interpolation(
     interpolation_weights=interpolation_weights,
     n_clusters=10, 
     match_method='hungarian',
+    use_multiscale_matching=True,
     use_dino_matching=True,
     config_path=config_path
 )

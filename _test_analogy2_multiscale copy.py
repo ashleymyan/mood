@@ -4,8 +4,8 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "1"
 import torch
 from PIL import Image
 import numpy as np
-from app import train_mood_space, perform_three_image_analogy, perform_three_image_analogy_no_compression
-from app import method2_analogy, perform_two_image_interpolation
+from app import train_mood_space
+from app import method2_analogy, method2_analogy_multi_corr
 from ipadapter_model import create_image_grid
 import matplotlib.pyplot as plt
 # 
@@ -31,16 +31,12 @@ model, trainer = train_mood_space(
     config_path=config_path,
 )
 # %%
-interpolation_weights = np.linspace(0.0, 2.0, 11).tolist()
-interpolated_images = method2_analogy(
+interpolation_weights = np.linspace(0.0, 1.0, 11).tolist()
+interpolated_images = method2_analogy_multi_corr(
     image_list=[image3, image1, image2], 
     model=model, 
     interpolation_weights=interpolation_weights,
-    n_clusters=10,
-    n_clusters2=100,
-    skip_a1a2_matching=True,
-    use_a1a2_dino_matching=False,
-    match_method='hungarian',
+    skip_a1a2_matching=False,
 )
 all_images = interpolated_images
 

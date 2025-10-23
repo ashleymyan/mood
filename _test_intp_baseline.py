@@ -2,7 +2,6 @@
 import torch
 from PIL import Image
 import numpy as np
-from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images, get_correspondence_plot_from_multiple_images
 from app import interpolate_two_images_no_compression
 from ipadapter_model import create_image_grid
 # 
@@ -12,17 +11,20 @@ path2 = "./images/playguitar.png"
 # path2 = "./images/input_bread.png"
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
+path1 = "./images/jimi_portrait.jpg"
+path2 = "./images/jimi_action.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
 # %%
 config_path = "./config.yaml"
-interpolation_weights = np.linspace(0., 1.0, 10).tolist()
+interpolation_weights = np.linspace(0., 2.0, 10).tolist()
 interpolated_images = interpolate_two_images_no_compression(
     image1, 
     image2, 
     interpolation_weights,
     n_clusters=10, 
     match_method='hungarian',
+    use_multiscale_matching=True,
     dino_matching=True,
     config_path=config_path
 )

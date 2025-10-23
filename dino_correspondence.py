@@ -165,7 +165,6 @@ def cosine_similarity(matrix_a, matrix_b):
 def hungarian_match_centers(center_features1, center_features2):
     distances = torch.cdist(center_features1, center_features2)
     distances = distances.cpu().detach().numpy()
-    
     _, column_indices = linear_sum_assignment(distances)
     return column_indices
 
@@ -180,13 +179,12 @@ def match_cluster_centers(image_embed1, image_embed2, eigvec1, eigvec2,
                          match_method='hungarian'):
     cluster_labels1 = eigvec1.argmax(-1).cpu().numpy()
     cluster_labels2 = eigvec2.argmax(-1).cpu().numpy()
-    n_clusters = eigvec1.shape[-1]
     
     center_features1 = get_cluster_center_features(
-        image_embed1, cluster_labels1, n_clusters
+        image_embed1, cluster_labels1, eigvec1.shape[-1]
     )
     center_features2 = get_cluster_center_features(
-        image_embed2, cluster_labels2, n_clusters
+        image_embed2, cluster_labels2, eigvec2.shape[-1]
     )
     
     if match_method == 'hungarian':

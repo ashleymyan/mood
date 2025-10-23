@@ -5,7 +5,7 @@ import torch
 from PIL import Image
 import numpy as np
 from app import train_mood_space, perform_three_image_analogy, perform_three_image_analogy_no_compression
-from app import decoded_clip_space_analogy
+from app import method2_analogy
 from ipadapter_model import create_image_grid
 import matplotlib.pyplot as plt
 # 
