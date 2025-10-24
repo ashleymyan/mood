@@ -208,14 +208,14 @@ class CompressionModel(pl.LightningModule):
             return torch.zeros((1, self.config.n_eig), device=features.device)
     
     def _compute_multiscale_similarity(self, eigenvectors: torch.Tensor, 
-                                      start_n_eig: int = 2, step_mult: int = 2) -> torch.Tensor:
+                                      start_n_eig: int = 4, step_mult: int = 2) -> torch.Tensor:
         """Compute multi-scale similarity matrix from eigenvectors.
         eigenvectors is (batch*length, n_eig)
         """
         total_similarity = 0.0
         num_scales = 0
-        current_n_eig = start_n_eig
         max_available = eigenvectors.shape[1]
+        current_n_eig = min(start_n_eig, max_available)
         
         if self.config.single_scale_flag:
             current_n_eig = max_available
