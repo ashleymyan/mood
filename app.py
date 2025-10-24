@@ -504,7 +504,8 @@ def perform_three_image_analogy(image_list: List[Image.Image],
                                n_clusters: int = 30,
                                n_samples: int = 1, 
                                match_method: str = 'hungarian',
-                               config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
+                               config_path: str = DEFAULT_CONFIG_PATH,
+                               do_cycle_consistency: bool = False) -> Union[Tuple[Image.Image, plt.Figure, List[Image.Image]], Tuple[Image.Image, plt.Figure, List[Image.Image], plt.Figure, List[Image.Image]]]:
     """
     Perform three-image analogy: given A2, A1, B1, predict A2 -> B2.
     
@@ -585,6 +586,68 @@ def perform_three_image_analogy(image_list: List[Image.Image],
                 ax.set_title(f"w={weight:.2f}")
     
     fig.tight_layout()
+
+    if do_cycle_consistency:
+        # Currently we have the directions from A1 -> B1 and we are applying it to A2 to get B2
+        # We can also compute the direction from A1 -> A2 and apply it to B1 to get B2
+        n_clusters = cluster_eigenvectors[0].shape[-1]
+
+        # Invert mappings to get A1->A2 and B1->A1
+        a1_to_a2_mapping = np.full(n_clusters, -1, dtype=np.int64)
+        for i_a2, i_a1 in enumerate(a2_to_a1_mapping):
+            a1_to_a2_mapping[i_a1] = i_a2
+
+        b1_to_a1_mapping = np.full(n_clusters, -1, dtype=np.int64)
+        for i_a1, i_b1 in enumerate(a1_to_b1_mapping):
+            b1_to_a1_mapping[i_b1] = i_a1
+
+        # Compute cluster center features on compressed embeddings
+        a1_centers = get_cluster_center_features(compressed_image_embeds[1], cluster_eigenvectors[1].argmax(-1).cpu(), n_clusters)
+        a2_centers = get_cluster_center_features(compressed_image_embeds[0], cluster_eigenvectors[0].argmax(-1).cpu(), n_clusters)
+
+        # Per-cluster direction A1 -> A2 in compressed space
+        dir_a1_to_a2 = []
+        for i_a1 in range(n_clusters):
+            i_a2 = a1_to_a2_mapping[i_a1]
+            if i_a2 < 0:
+                dir_a1_to_a2.append(torch.zeros_like(a1_centers[i_a1]))
+            else:
+                dir_a1_to_a2.append(a2_centers[i_a2] - a1_centers[i_a1])
+        dir_a1_to_a2 = torch.stack(dir_a1_to_a2)
+
+        # Build direction field for B1 using B1->A1 then A1->A2 (compressed space)
+        b1_labels = cluster_eigenvectors[2].argmax(-1).cpu()
+        direction_for_b1 = torch.zeros_like(compressed_image_embeds[2])
+        for j_b1 in range(n_clusters):
+            mask = b1_labels == j_b1
+            if mask.sum() > 0:
+                i_a1 = b1_to_a1_mapping[j_b1]
+                if i_a1 >= 0:
+                    direction_for_b1[mask] = dir_a1_to_a2[i_a1]
+
+        # Interpolate from B1 toward B2 along the constructed direction and plot
+        fig_cycle, axes_cycle = plt.subplots(n_samples, n_steps, figsize=(n_steps * 2, n_samples * 3))
+        if n_samples == 1:
+            axes_cycle = axes_cycle.reshape(1, -1)
+
+        cycle_generated_images = []
+        for i_w, weight in enumerate(interpolation_weights):
+            b1_interpolated = compressed_image_embeds[2] + direction_for_b1 * weight
+            b1_decompressed = model.decoder(b1_interpolated)
+            gen_images_b1 = generate_images_from_clip_embeddings(ip_model, b1_decompressed, num_samples=n_samples)
+            cycle_generated_images.extend(gen_images_b1)
+            for i_sample in range(n_samples):
+                ax = axes_cycle[i_sample, i_w]
+                ax.imshow(gen_images_b1[i_sample])
+                ax.axis('off')
+                if i_sample == 0:
+                    ax.set_title(f"w={weight:.2f}")
+        fig_cycle.tight_layout()
+        
+        del ip_model
+        clear_gpu_memory()
+        return correspondence_plot, fig, generated_images, fig_cycle, cycle_generated_images
+        
     
     # Clean up
     del ip_model
@@ -648,7 +711,8 @@ def perform_three_image_analogy_no_compression(image_list: List[Image.Image],
                                n_clusters: int = 30,
                                n_samples: int = 1, 
                                match_method: str = 'hungarian',
-                               config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[Image.Image, plt.Figure, List[Image.Image]]:
+                               config_path: str = DEFAULT_CONFIG_PATH,
+                               do_cycle_consistency: bool = False) -> Union[Tuple[Image.Image, plt.Figure, List[Image.Image]], Tuple[Image.Image, plt.Figure, List[Image.Image], plt.Figure, List[Image.Image]]]:
     """
     Perform three-image analogy: given A2, A1, B1, predict A2 -> B2.
     
@@ -729,6 +793,66 @@ def perform_three_image_analogy_no_compression(image_list: List[Image.Image],
                 ax.set_title(f"w={weight:.2f}")
     
     fig.tight_layout()
+
+    if do_cycle_consistency:
+        # Currently we have the directions from A1 -> B1 and we are applying it to A2 to get B2
+        # We can also compute the direction from A1 -> A2 and apply it to B1 to get B2
+        n_clusters = cluster_eigenvectors[0].shape[-1]
+
+        # Invert mappings to get A1->A2 and B1->A1
+        a1_to_a2_mapping_inv = np.full(n_clusters, -1, dtype=np.int64)
+        for i_a2, i_a1 in enumerate(a2_to_a1_mapping):
+            a1_to_a2_mapping_inv[i_a1] = i_a2
+
+        b1_to_a1_mapping_inv = np.full(n_clusters, -1, dtype=np.int64)
+        for i_a1, i_b1 in enumerate(a1_to_b1_mapping):
+            b1_to_a1_mapping_inv[i_b1] = i_a1
+
+        # Compute cluster center features on clip embeddings
+        a1_centers = get_cluster_center_features(clip_image_embeds[1], cluster_eigenvectors[1].argmax(-1).cpu(), n_clusters)
+        a2_centers = get_cluster_center_features(clip_image_embeds[0], cluster_eigenvectors[0].argmax(-1).cpu(), n_clusters)
+
+        # Per-cluster direction A1 -> A2 in clip space
+        dir_a1_to_a2 = []
+        for i_a1 in range(n_clusters):
+            i_a2 = a1_to_a2_mapping_inv[i_a1]
+            if i_a2 < 0:
+                dir_a1_to_a2.append(torch.zeros_like(a1_centers[i_a1]))
+            else:
+                dir_a1_to_a2.append(a2_centers[i_a2] - a1_centers[i_a1])
+        dir_a1_to_a2 = torch.stack(dir_a1_to_a2)
+
+        # Build direction field for B1 using B1->A1 then A1->A2 (clip space)
+        b1_labels = cluster_eigenvectors[2].argmax(-1).cpu()
+        direction_for_b1 = torch.zeros_like(clip_image_embeds[2])
+        for j_b1 in range(n_clusters):
+            mask = b1_labels == j_b1
+            if mask.sum() > 0:
+                i_a1 = b1_to_a1_mapping_inv[j_b1]
+                if i_a1 >= 0:
+                    direction_for_b1[mask] = dir_a1_to_a2[i_a1]
+
+        # Interpolate from B1 toward B2 along the constructed direction and plot
+        fig_cycle, axes_cycle = plt.subplots(n_samples, n_steps, figsize=(n_steps * 2, n_samples * 3))
+        if n_samples == 1:
+            axes_cycle = axes_cycle.reshape(1, -1)
+
+        cycle_generated_images = []
+        for i_w, weight in enumerate(interpolation_weights):
+            b1_interpolated = clip_image_embeds[2] + direction_for_b1 * weight
+            gen_images_b1 = generate_images_from_clip_embeddings(ip_model, b1_interpolated, num_samples=n_samples)
+            cycle_generated_images.extend(gen_images_b1)
+            for i_sample in range(n_samples):
+                ax = axes_cycle[i_sample, i_w]
+                ax.imshow(gen_images_b1[i_sample])
+                ax.axis('off')
+                if i_sample == 0:
+                    ax.set_title(f"w={weight:.2f}")
+        fig_cycle.tight_layout()
+        
+        del ip_model
+        clear_gpu_memory()
+        return correspondence_plot, fig, generated_images, fig_cycle, cycle_generated_images
     
     # Clean up
     del ip_model
