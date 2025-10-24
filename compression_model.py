@@ -217,6 +217,9 @@ class CompressionModel(pl.LightningModule):
         current_n_eig = start_n_eig
         max_available = eigenvectors.shape[1]
         
+        if self.config.single_scale_flag:
+            current_n_eig = max_available
+        
         while current_n_eig <= max_available:
             eigvec_subset = eigenvectors[:, :current_n_eig]
             eigvec_normalized = F.normalize(eigvec_subset, dim=-1)

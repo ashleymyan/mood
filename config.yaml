@@ -9,6 +9,8 @@ flag_encoder_loss: 1.0
 flag_decoder_loss: 0.01
 recon_loss: 1.0
 
+single_scale_flag: false
+
 eigvec_loss: 0.0
 repulsion_loss: 0.0
 boundary_loss: 0.0
