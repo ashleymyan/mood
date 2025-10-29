@@ -130,7 +130,7 @@ dependencies:
       - nbclient==0.10.2
       - nbconvert==7.16.6
       - nbformat==5.10.4
-      - ncut-pytorch==2.0.2
+      - ncut-pytorch==2.1.7
       - nest-asyncio==1.6.0
       - networkx==3.3
       - notebook==6.4.12
@@ -217,6 +217,7 @@ dependencies:
       - tokenizers==0.22.1
       - tomlkit==0.13.3
       - torch==2.8.0+cu129
+      - --extra-index-url https://download.pytorch.org/whl/cu129
       - torchmetrics==1.8.2
       - torchvision==0.23.0+cu129
       - tornado==6.5.2
