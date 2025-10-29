@@ -36,7 +36,8 @@ from dino_correspondence import (
     match_centers_three_images, match_centers_two_images, 
     get_cluster_center_features,
     hungarian_match_centers,
-    kway_cluster_per_image_two_step, match_centers_two_step
+    kway_cluster_per_image_two_step, match_centers_two_step,
+    kway_cluster_per_image_two_step_fgbg, match_centers_two_step_fgbg
 )
 from extract_features import (
     extract_clip_features,
@@ -975,6 +976,11 @@ def perform_two_image_interpolation(image1: Image.Image,
                                   n_subclusters_per_supercluster: int = 5,
                                   supercluster_match_method: str = 'hungarian',
                                   subcluster_match_method: str = 'hungarian',
+                                  use_two_step_fgbg_clustering: bool = False,
+                                  n_foreground_subclusters: int = 10,
+                                  n_background_subclusters: int = 5,
+                                  foreground_match_method: str = 'hungarian',
+                                  background_match_method: str = 'hungarian',
                                   seed: Optional[int] = None,
                                   config_path: str = DEFAULT_CONFIG_PATH) -> List[Image.Image]:
     """
@@ -994,6 +1000,11 @@ def perform_two_image_interpolation(image1: Image.Image,
         n_subclusters_per_supercluster: Number of subclusters per supercluster (2-step only)
         supercluster_match_method: Matching method for superclusters (2-step only)
         subcluster_match_method: Matching method for subclusters (2-step only)
+        use_two_step_fgbg_clustering: Whether to use FG/BG 2-step clustering
+        n_foreground_subclusters: Number of foreground subclusters (FG/BG only)
+        n_background_subclusters: Number of background subclusters (FG/BG only)
+        foreground_match_method: Matching method for foreground subclusters (FG/BG only)
+        background_match_method: Matching method for background subclusters (FG/BG only)
         seed: Random seed for generation
         
     Returns:
@@ -1009,6 +1020,31 @@ def perform_two_image_interpolation(image1: Image.Image,
     
     if use_multiscale_matching:
         direction_field = multiscale_directions(dino_image_embeds, compressed_image_embeds, n_cluster_list=[10, 30], n_repeats=1)
+    elif use_two_step_fgbg_clustering and use_dino_matching:
+        # Use FG/BG 2-step clustering
+        supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster, fg_indices = kway_cluster_per_image_two_step_fgbg(
+            dino_image_embeds,
+            n_foreground_subclusters=n_foreground_subclusters,
+            n_background_subclusters=n_background_subclusters
+        )
+        
+        # Match using FG/BG 2-step approach
+        subcluster_mapping = match_centers_two_step_fgbg(
+            dino_image_embeds[0], dino_image_embeds[1],
+            subcluster_eigvecs[0], subcluster_eigvecs[1],
+            subcluster_to_supercluster[0], subcluster_to_supercluster[1],
+            n_background_subclusters, n_foreground_subclusters,
+            background_match_method=background_match_method,
+            foreground_match_method=foreground_match_method
+        )
+        
+        # Compute direction using subclusters
+        direction_field = compute_direction_from_two_images_two_step(
+            compressed_image_embeds, 
+            [subcluster_eigvecs[0], subcluster_eigvecs[1]], 
+            subcluster_mapping, 
+            use_unit_norm
+        )
     elif use_two_step_clustering and use_dino_matching:
         # Use 2-step hierarchical clustering
         supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster = kway_cluster_per_image_two_step(
@@ -1084,6 +1120,11 @@ def perform_n_image_interpolation(
     n_subclusters_per_supercluster: int = 5,
     supercluster_match_method: str = 'hungarian',
     subcluster_match_method: str = 'hungarian',
+    use_two_step_fgbg_clustering: bool = False,
+    n_foreground_subclusters: int = 10,
+    n_background_subclusters: int = 5,
+    foreground_match_method: str = 'hungarian',
+    background_match_method: str = 'hungarian',
     seed: Optional[int] = None,
     config_path: str = DEFAULT_CONFIG_PATH,
 ) -> List[Image.Image]:
@@ -1102,6 +1143,11 @@ def perform_n_image_interpolation(
         n_subclusters_per_supercluster: Number of subclusters per supercluster (2-step only).
         supercluster_match_method: Matching method for superclusters (2-step only).
         subcluster_match_method: Matching method for subclusters (2-step only).
+        use_two_step_fgbg_clustering: Whether to use FG/BG 2-step clustering.
+        n_foreground_subclusters: Number of foreground subclusters (FG/BG only).
+        n_background_subclusters: Number of background subclusters (FG/BG only).
+        foreground_match_method: Matching method for foreground subclusters (FG/BG only).
+        background_match_method: Matching method for background subclusters (FG/BG only).
         seed: Optional random seed forwarded to the generator.
         config_path: Path to model configuration.
 
@@ -1159,7 +1205,36 @@ def perform_n_image_interpolation(
         return generated_images
 
     # Use DINO matching
-    if use_two_step_clustering:
+    if use_two_step_fgbg_clustering:
+        # FG/BG 2-step clustering
+        supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster, fg_indices = kway_cluster_per_image_two_step_fgbg(
+            dino_image_embeds,
+            n_foreground_subclusters=n_foreground_subclusters,
+            n_background_subclusters=n_background_subclusters
+        )
+        
+        cluster_eigenvectors = subcluster_eigvecs
+        effective_n_clusters = n_foreground_subclusters + n_background_subclusters
+        
+        # Match every image's subclusters back to the base image
+        cluster_mappings: List[np.ndarray] = [np.zeros(effective_n_clusters, dtype=np.int64) for _ in range(n_images)]
+        for image_idx in range(n_images):
+            if image_idx == base_image_idx:
+                cluster_mappings[image_idx] = np.arange(effective_n_clusters)
+            else:
+                cluster_mappings[image_idx] = match_centers_two_step_fgbg(
+                    dino_image_embeds[base_image_idx],
+                    dino_image_embeds[image_idx],
+                    subcluster_eigvecs[base_image_idx],
+                    subcluster_eigvecs[image_idx],
+                    subcluster_to_supercluster[base_image_idx],
+                    subcluster_to_supercluster[image_idx],
+                    n_background_subclusters,
+                    n_foreground_subclusters,
+                    background_match_method=background_match_method,
+                    foreground_match_method=foreground_match_method,
+                )
+    elif use_two_step_clustering:
         # 2-step hierarchical clustering
         supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster = kway_cluster_per_image_two_step(
             dino_image_embeds,
@@ -1273,6 +1348,11 @@ def perform_n_image_interpolation_per_cluster(
     n_subclusters_per_supercluster: int = 5,
     supercluster_match_method: str = 'hungarian',
     subcluster_match_method: str = 'hungarian',
+    use_two_step_fgbg_clustering: bool = False,
+    n_foreground_subclusters: int = 10,
+    n_background_subclusters: int = 5,
+    foreground_match_method: str = 'hungarian',
+    background_match_method: str = 'hungarian',
     seed: Optional[int] = None,
     config_path: str = DEFAULT_CONFIG_PATH,
     precomputed_dino_embeds: Optional[torch.Tensor] = None,
@@ -1283,7 +1363,8 @@ def perform_n_image_interpolation_per_cluster(
 
     Args mirror ``perform_n_image_interpolation`` but ``interpolation_weights`` must
     contain exactly ``n_clusters`` entries (or n_superclusters * n_subclusters_per_supercluster
-    if using 2-step clustering). Each entry is a weight array that gauges how strongly 
+    if using 2-step clustering, or n_foreground_subclusters + n_background_subclusters
+    if using FG/BG clustering). Each entry is a weight array that gauges how strongly 
     to follow the base-to-image direction for the corresponding cluster. Only one output 
     image is generated.
     
@@ -1297,6 +1378,11 @@ def perform_n_image_interpolation_per_cluster(
         n_subclusters_per_supercluster: Number of subclusters per supercluster (2-step only).
         supercluster_match_method: Matching method for superclusters (2-step only).
         subcluster_match_method: Matching method for subclusters (2-step only).
+        use_two_step_fgbg_clustering: Whether to use FG/BG 2-step clustering.
+        n_foreground_subclusters: Number of foreground subclusters (FG/BG only).
+        n_background_subclusters: Number of background subclusters (FG/BG only).
+        foreground_match_method: Matching method for foreground subclusters (FG/BG only).
+        background_match_method: Matching method for background subclusters (FG/BG only).
     """
 
     if model is None or model == []:
@@ -1307,7 +1393,12 @@ def perform_n_image_interpolation_per_cluster(
         raise ValueError("base_image_idx must reference an image in image_list")
     
     # Determine effective number of clusters
-    effective_n_clusters = n_superclusters * n_subclusters_per_supercluster if use_two_step_clustering else n_clusters
+    if use_two_step_fgbg_clustering:
+        effective_n_clusters = n_foreground_subclusters + n_background_subclusters
+    elif use_two_step_clustering:
+        effective_n_clusters = n_superclusters * n_subclusters_per_supercluster
+    else:
+        effective_n_clusters = n_clusters
     
     if len(interpolation_weights) != effective_n_clusters:
         raise ValueError(f"interpolation_weights length must match effective number of clusters ({effective_n_clusters})")
@@ -1342,7 +1433,15 @@ def perform_n_image_interpolation_per_cluster(
     if precomputed_cluster_eigenvectors is not None:
         cluster_eigenvectors = precomputed_cluster_eigenvectors
     else:
-        if use_two_step_clustering:
+        if use_two_step_fgbg_clustering:
+            # FG/BG 2-step clustering
+            supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster, fg_indices = kway_cluster_per_image_two_step_fgbg(
+                dino_image_embeds,
+                n_foreground_subclusters=n_foreground_subclusters,
+                n_background_subclusters=n_background_subclusters
+            )
+            cluster_eigenvectors = subcluster_eigvecs
+        elif use_two_step_clustering:
             # 2-step hierarchical clustering
             supercluster_eigvecs, subcluster_eigvecs, subcluster_to_supercluster = kway_cluster_per_image_two_step(
                 dino_image_embeds,
@@ -1365,7 +1464,20 @@ def perform_n_image_interpolation_per_cluster(
             if image_idx == base_image_idx:
                 cluster_mappings[image_idx] = np.arange(effective_n_clusters)
             else:
-                if use_two_step_clustering:
+                if use_two_step_fgbg_clustering:
+                    cluster_mappings[image_idx] = match_centers_two_step_fgbg(
+                        dino_image_embeds[base_image_idx],
+                        dino_image_embeds[image_idx],
+                        subcluster_eigvecs[base_image_idx],
+                        subcluster_eigvecs[image_idx],
+                        subcluster_to_supercluster[base_image_idx],
+                        subcluster_to_supercluster[image_idx],
+                        n_background_subclusters,
+                        n_foreground_subclusters,
+                        background_match_method=background_match_method,
+                        foreground_match_method=foreground_match_method,
+                    )
+                elif use_two_step_clustering:
                     cluster_mappings[image_idx] = match_centers_two_step(
                         dino_image_embeds[base_image_idx],
                         dino_image_embeds[image_idx],
@@ -1708,10 +1820,11 @@ def create_gradio_interface():
                         n_steps = gr.Slider(minimum=3, maximum=20, step=1, value=10, label="Number of Steps")
                         
                         # Clustering method selection
-                        use_two_step_clustering = gr.Checkbox(
-                            label="Use 2-Step Hierarchical Clustering",
-                            value=False,
-                            info="First find superclusters, then subclusters within each supercluster"
+                        clustering_method = gr.Radio(
+                            choices=["Single-step", "Hierarchical 2-step", "FG/BG 2-step"],
+                            value="Single-step",
+                            label="Clustering Method",
+                            info="Choose between single-step, hierarchical, or foreground/background clustering"
                         )
                         
                         # Single-step clustering controls
@@ -1723,8 +1836,8 @@ def create_gradio_interface():
                                 label="Matching Method"
                             )
                         
-                        # Two-step clustering controls
-                        with gr.Group(visible=False) as two_step_controls:
+                        # Hierarchical two-step clustering controls
+                        with gr.Group(visible=False) as hierarchical_two_step_controls:
                             n_superclusters = gr.Slider(
                                 minimum=2, maximum=10, step=1, value=3,
                                 label="Number of Superclusters",
@@ -1746,17 +1859,41 @@ def create_gradio_interface():
                                 label="Subcluster Matching Method"
                             )
                         
-                        # Toggle visibility based on clustering method
-                        def toggle_clustering_controls(use_two_step):
-                            return (
-                                gr.update(visible=not use_two_step),
-                                gr.update(visible=use_two_step)
+                        # FG/BG two-step clustering controls
+                        with gr.Group(visible=False) as fgbg_two_step_controls:
+                            n_foreground_subclusters = gr.Slider(
+                                minimum=2, maximum=20, step=1, value=10,
+                                label="Foreground Subclusters",
+                                info="Number of clusters for foreground region"
+                            )
+                            n_background_subclusters = gr.Slider(
+                                minimum=2, maximum=20, step=1, value=5,
+                                label="Background Subclusters",
+                                info="Number of clusters for background region"
+                            )
+                            foreground_match_method = gr.Radio(
+                                ["hungarian", "argmin"],
+                                value="hungarian",
+                                label="Foreground Matching Method"
+                            )
+                            background_match_method = gr.Radio(
+                                ["hungarian", "argmin"],
+                                value="hungarian",
+                                label="Background Matching Method"
                             )
                         
-                        use_two_step_clustering.change(
+                        # Toggle visibility based on clustering method
+                        def toggle_clustering_controls(method):
+                            return (
+                                gr.update(visible=(method == "Single-step")),
+                                gr.update(visible=(method == "Hierarchical 2-step")),
+                                gr.update(visible=(method == "FG/BG 2-step"))
+                            )
+                        
+                        clustering_method.change(
                             toggle_clustering_controls,
-                            inputs=[use_two_step_clustering],
-                            outputs=[single_step_controls, two_step_controls]
+                            inputs=[clustering_method],
+                            outputs=[single_step_controls, hierarchical_two_step_controls, fgbg_two_step_controls]
                         )
                     
                     interpolate_btn = gr.Button("Interpolate", variant="primary")
@@ -1770,9 +1907,12 @@ def create_gradio_interface():
             # Interpolation function
             def run_interpolation(
                 img_a, img_b, model, w_start, w_end, n_steps, 
+                clustering_method_choice,
                 n_clusters, match_method,
-                use_two_step, n_superclusters, n_subclusters, 
-                supercluster_match, subcluster_match
+                n_superclusters, n_subclusters, 
+                supercluster_match, subcluster_match,
+                n_fg_subclusters, n_bg_subclusters,
+                fg_match, bg_match
             ):
                 if model is None or model == []:
                     gr.Error("Please train a model first")
@@ -1783,6 +1923,11 @@ def create_gradio_interface():
                     return None
                 
                 weights = torch.linspace(w_start, w_end, n_steps).tolist()
+                
+                # Determine which clustering method to use
+                use_two_step = (clustering_method_choice == "Hierarchical 2-step")
+                use_fgbg = (clustering_method_choice == "FG/BG 2-step")
+                
                 result_images = perform_two_image_interpolation(
                     img_a, img_b, model, weights, 
                     n_clusters=n_clusters, 
@@ -1791,7 +1936,12 @@ def create_gradio_interface():
                     n_superclusters=n_superclusters,
                     n_subclusters_per_supercluster=n_subclusters,
                     supercluster_match_method=supercluster_match,
-                    subcluster_match_method=subcluster_match
+                    subcluster_match_method=subcluster_match,
+                    use_two_step_fgbg_clustering=use_fgbg,
+                    n_foreground_subclusters=n_fg_subclusters,
+                    n_background_subclusters=n_bg_subclusters,
+                    foreground_match_method=fg_match,
+                    background_match_method=bg_match
                 )
                 
                 # Resize for display
@@ -1806,9 +1956,12 @@ def create_gradio_interface():
                 run_interpolation,
                 inputs=[
                     image_a, image_b, model_state, w_start, w_end, n_steps, 
+                    clustering_method,
                     n_clusters, match_method,
-                    use_two_step_clustering, n_superclusters, n_subclusters_per_supercluster,
-                    supercluster_match_method, subcluster_match_method
+                    n_superclusters, n_subclusters_per_supercluster,
+                    supercluster_match_method, subcluster_match_method,
+                    n_foreground_subclusters, n_background_subclusters,
+                    foreground_match_method, background_match_method
                 ],
                 outputs=[interpolation_result]
             )
@@ -1940,10 +2093,11 @@ def create_gradio_interface():
                 
             with gr.Row():
                 # Clustering method selection
-                use_two_step_clustering_nimage = gr.Checkbox(
-                    label="Use 2-Step Hierarchical Clustering",
-                    value=False,
-                    info="First find superclusters, then subclusters within each supercluster"
+                clustering_method_nimage = gr.Radio(
+                    choices=["Single-step", "Hierarchical 2-step", "FG/BG 2-step"],
+                    value="Single-step",
+                    label="Clustering Method",
+                    info="Choose between single-step, hierarchical, or foreground/background clustering"
                 )
                 
             # Single-step clustering controls
@@ -1962,8 +2116,8 @@ def create_gradio_interface():
                         label="Matching Method"
                     )
             
-            # Two-step clustering controls
-            with gr.Group(visible=False) as two_step_controls_nimage:
+            # Hierarchical two-step clustering controls
+            with gr.Group(visible=False) as hierarchical_two_step_controls_nimage:
                 with gr.Row():
                     n_superclusters_nimage = gr.Slider(
                         minimum=2, maximum=10, step=1, value=3,
@@ -1987,17 +2141,43 @@ def create_gradio_interface():
                         label="Subcluster Matching Method"
                     )
             
+            # FG/BG two-step clustering controls
+            with gr.Group(visible=False) as fgbg_two_step_controls_nimage:
+                with gr.Row():
+                    n_foreground_subclusters_nimage = gr.Slider(
+                        minimum=2, maximum=20, step=1, value=10,
+                        label="Foreground Subclusters",
+                        info="Number of clusters for foreground region"
+                    )
+                    n_background_subclusters_nimage = gr.Slider(
+                        minimum=2, maximum=20, step=1, value=5,
+                        label="Background Subclusters",
+                        info="Number of clusters for background region"
+                    )
+                with gr.Row():
+                    foreground_match_method_nimage = gr.Radio(
+                        ["hungarian", "argmin"],
+                        value="hungarian",
+                        label="Foreground Matching Method"
+                    )
+                    background_match_method_nimage = gr.Radio(
+                        ["hungarian", "argmin"],
+                        value="hungarian",
+                        label="Background Matching Method"
+                    )
+            
             # Toggle visibility based on clustering method
-            def toggle_clustering_controls_nimage(use_two_step):
+            def toggle_clustering_controls_nimage(method):
                 return (
-                    gr.update(visible=not use_two_step),
-                    gr.update(visible=use_two_step)
+                    gr.update(visible=(method == "Single-step")),
+                    gr.update(visible=(method == "Hierarchical 2-step")),
+                    gr.update(visible=(method == "FG/BG 2-step"))
                 )
             
-            use_two_step_clustering_nimage.change(
+            clustering_method_nimage.change(
                 toggle_clustering_controls_nimage,
-                inputs=[use_two_step_clustering_nimage],
-                outputs=[single_step_controls_nimage, two_step_controls_nimage]
+                inputs=[clustering_method_nimage],
+                outputs=[single_step_controls_nimage, hierarchical_two_step_controls_nimage, fgbg_two_step_controls_nimage]
             )
 
             compute_clusters_btn = gr.Button("Compute Cluster Correspondences", variant="secondary")
@@ -2111,15 +2291,19 @@ def create_gradio_interface():
             def compute_cluster_interface(
                 gallery_images,
                 base_idx,
+                clustering_method_choice,
                 n_clusters,
                 match_method,
-                current_config,
-                current_weights,
-                use_two_step,
                 n_superclusters,
                 n_subclusters,
                 supercluster_match,
                 subcluster_match,
+                n_fg_subclusters,
+                n_bg_subclusters,
+                fg_match,
+                bg_match,
+                current_config,
+                current_weights,
             ):
                 images = load_gradio_images_helper(gallery_images)
                 if not images or len(images) < 2:
@@ -2132,8 +2316,16 @@ def create_gradio_interface():
                     base_value = base_idx if base_idx is not None else None
                     return _cluster_updates_placeholder(base_value)
 
-                # Determine effective number of clusters
-                effective_n_clusters = n_superclusters * n_subclusters if use_two_step else n_clusters
+                # Determine which clustering method and effective number of clusters
+                use_two_step = (clustering_method_choice == "Hierarchical 2-step")
+                use_fgbg = (clustering_method_choice == "FG/BG 2-step")
+                
+                if use_fgbg:
+                    effective_n_clusters = n_fg_subclusters + n_bg_subclusters
+                elif use_two_step:
+                    effective_n_clusters = n_superclusters * n_subclusters
+                else:
+                    effective_n_clusters = n_clusters
                 
                 if effective_n_clusters > MAX_INTERP_CLUSTERS:
                     gr.Error(f"Please select at most {MAX_INTERP_CLUSTERS} total clusters for this demo.")
@@ -2153,8 +2345,14 @@ def create_gradio_interface():
                 images_tensor = torch.stack([dino_image_transform(image) for image in images])
                 dino_embeds = extract_dino_features(images_tensor)
                 
-                # Perform clustering (single-step or 2-step)
-                if use_two_step:
+                # Perform clustering (single-step, hierarchical 2-step, or FG/BG 2-step)
+                if use_fgbg:
+                    supercluster_eigvecs, cluster_eigvecs, subcluster_to_supercluster, fg_indices = kway_cluster_per_image_two_step_fgbg(
+                        dino_embeds,
+                        n_foreground_subclusters=n_fg_subclusters,
+                        n_background_subclusters=n_bg_subclusters
+                    )
+                elif use_two_step:
                     supercluster_eigvecs, cluster_eigvecs, subcluster_to_supercluster = kway_cluster_per_image_two_step(
                         dino_embeds,
                         n_superclusters=n_superclusters,
@@ -2171,7 +2369,20 @@ def create_gradio_interface():
                     if image_idx == base_idx_int:
                         cluster_mappings.append(np.arange(effective_n_clusters))
                     else:
-                        if use_two_step:
+                        if use_fgbg:
+                            mapping = match_centers_two_step_fgbg(
+                                dino_embeds[base_idx_int],
+                                dino_embeds[image_idx],
+                                cluster_eigvecs[base_idx_int],
+                                cluster_eigvecs[image_idx],
+                                subcluster_to_supercluster[base_idx_int],
+                                subcluster_to_supercluster[image_idx],
+                                n_bg_subclusters,
+                                n_fg_subclusters,
+                                background_match_method=bg_match,
+                                foreground_match_method=fg_match,
+                            )
+                        elif use_two_step:
                             mapping = match_centers_two_step(
                                 dino_embeds[base_idx_int],
                                 dino_embeds[image_idx],
@@ -2256,11 +2467,17 @@ def create_gradio_interface():
                     "n_clusters": effective_n_clusters,
                     "base_idx": base_idx_int,
                     "match_method": match_method,
+                    "clustering_method": clustering_method_choice,
                     "use_two_step": use_two_step,
                     "n_superclusters": n_superclusters if use_two_step else None,
                     "n_subclusters": n_subclusters if use_two_step else None,
                     "supercluster_match": supercluster_match if use_two_step else None,
                     "subcluster_match": subcluster_match if use_two_step else None,
+                    "use_fgbg": use_fgbg,
+                    "n_fg_subclusters": n_fg_subclusters if use_fgbg else None,
+                    "n_bg_subclusters": n_bg_subclusters if use_fgbg else None,
+                    "fg_match": fg_match if use_fgbg else None,
+                    "bg_match": bg_match if use_fgbg else None,
                     "dino_embeds": dino_embeds,
                     "cluster_eigvecs": cluster_eigvecs,
                     "cluster_mappings": cluster_mappings,
@@ -2343,15 +2560,19 @@ def create_gradio_interface():
                 inputs=[
                     input_images,
                     base_selector,
+                    clustering_method_nimage,
                     cluster_count_slider,
                     match_method_dropdown,
-                    cluster_config_state,
-                    cluster_weight_state,
-                    use_two_step_clustering_nimage,
                     n_superclusters_nimage,
                     n_subclusters_per_supercluster_nimage,
                     supercluster_match_method_nimage,
                     subcluster_match_method_nimage,
+                    n_foreground_subclusters_nimage,
+                    n_background_subclusters_nimage,
+                    foreground_match_method_nimage,
+                    background_match_method_nimage,
+                    cluster_config_state,
+                    cluster_weight_state,
                 ],
                 outputs=[
                     cluster_config_state,
@@ -2734,12 +2955,22 @@ def create_gradio_interface():
                 base_idx = config.get("base_idx", 0)
                 match_method = config.get("match_method", "hungarian")
                 
-                # Extract 2-step clustering parameters if present
-                use_two_step = config.get("use_two_step", False)
+                # Extract clustering method and parameters
+                clustering_method = config.get("clustering_method", "Single-step")
+                use_two_step = (clustering_method == "Hierarchical 2-step")
+                use_fgbg = (clustering_method == "FG/BG 2-step")
+                
+                # Hierarchical 2-step parameters
                 n_superclusters = config.get("n_superclusters")
                 n_subclusters = config.get("n_subclusters")
                 supercluster_match = config.get("supercluster_match", "hungarian")
                 subcluster_match = config.get("subcluster_match", "hungarian")
+                
+                # FG/BG 2-step parameters
+                n_fg_subclusters = config.get("n_fg_subclusters")
+                n_bg_subclusters = config.get("n_bg_subclusters")
+                fg_match = config.get("fg_match", "hungarian")
+                bg_match = config.get("bg_match", "hungarian")
                 
                 # Extract precomputed cluster data
                 precomputed_dino_embeds = config.get("dino_embeds")
@@ -2777,6 +3008,11 @@ def create_gradio_interface():
                         n_subclusters_per_supercluster=n_subclusters if use_two_step else 5,
                         supercluster_match_method=supercluster_match,
                         subcluster_match_method=subcluster_match,
+                        use_two_step_fgbg_clustering=use_fgbg,
+                        n_foreground_subclusters=n_fg_subclusters if use_fgbg else 10,
+                        n_background_subclusters=n_bg_subclusters if use_fgbg else 5,
+                        foreground_match_method=fg_match,
+                        background_match_method=bg_match,
                         seed=None,
                         config_path=DEFAULT_CONFIG_PATH,
                         precomputed_dino_embeds=precomputed_dino_embeds,
