@@ -1,9 +1,6 @@
 #%%
 import torch
 from PIL import Image
-import numpy as np
-from app import train_mood_space, perform_two_image_interpolation, get_correspondence_plot_from_two_images, get_correspondence_plot_from_multiple_images
-from app import interpolate_two_images_no_compression
 from ipadapter_model import create_image_grid
 from dino_correspondence import _kway_cluster_single_image
 # 
@@ -22,8 +19,8 @@ from extract_features import extract_dino_features, dino_image_transform
 from dino_correspondence import ncut_tsne_multiple_images, kway_cluster_per_image, match_centers_two_images
 images = torch.stack([dino_image_transform(image) for image in [image1, image2]])
 dino_image_embeds = extract_dino_features(images)
-n_clusters1 = 10
-n_clusters2 = 15
+n_clusters1 = 6
+n_clusters2 = 6
 cluster_eigenvectors1 = _kway_cluster_single_image(dino_image_embeds[0], n_clusters=n_clusters1, gamma=None)
 cluster_eigenvectors2 = _kway_cluster_single_image(dino_image_embeds[1], n_clusters=n_clusters2, gamma=None)
 a_to_b_mapping = match_centers_two_images(

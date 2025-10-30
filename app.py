@@ -940,7 +940,9 @@ def perform_two_image_interpolation(image1: Image.Image,
                                   use_dino_matching: bool = True,
                                   use_multiscale_matching: bool = False,
                                   seed: Optional[int] = None,
-                                  config_path: str = DEFAULT_CONFIG_PATH) -> List[Image.Image]:
+                                  config_path: str = DEFAULT_CONFIG_PATH,
+                                  return_matching: bool = False,
+                                  predefined_matching = None) -> List[Image.Image]:
     """
     Interpolate between two images using the trained compression model.
     
@@ -969,13 +971,19 @@ def perform_two_image_interpolation(image1: Image.Image,
         direction_field = multiscale_directions(dino_image_embeds, compressed_image_embeds, n_cluster_list=[10, 30], n_repeats=1)
     elif use_dino_matching:
         # Use correspondence-based direction
-        cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+        if predefined_matching is None:
+            cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+            
+            a_to_b_mapping = match_centers_two_images(
+                dino_image_embeds[0], dino_image_embeds[1],
+                cluster_eigenvectors[0], cluster_eigenvectors[1], 
+                match_method=match_method
+            )
+            if return_matching:
+                return cluster_eigenvectors, a_to_b_mapping
         
-        a_to_b_mapping = match_centers_two_images(
-            dino_image_embeds[0], dino_image_embeds[1],
-            cluster_eigenvectors[0], cluster_eigenvectors[1], 
-            match_method=match_method
-        )
+        if predefined_matching is not None:
+            cluster_eigenvectors, a_to_b_mapping = predefined_matching
         
         direction_field = compute_direction_from_two_images(
             compressed_image_embeds, cluster_eigenvectors, a_to_b_mapping, use_unit_norm

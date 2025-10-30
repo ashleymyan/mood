@@ -32,7 +32,7 @@ image2 = Image.open(path2).resize((512, 512), resample=Image.Resampling.LANCZOS)
 #     match_method='argmin'
 # )
 # %%
-config_path = "./config_single_scale_flag.yaml"
+config_path = "./config.yaml"
 model, trainer = train_mood_space(
     # pil_images=[image1, image2, image3], 
     pil_images=[image1, image2],
