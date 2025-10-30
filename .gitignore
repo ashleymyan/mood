@@ -13,3 +13,4 @@ __pycache__/
 *.pyd
 *.pyw
 images/sit.png
+.trash

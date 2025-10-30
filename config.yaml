@@ -2,7 +2,7 @@ in_dim: 768 #1024 #768 #384
 mood_dim: -1
 out_dim: 1280
 latent_dim: 512
-n_layer: 4
+n_layer: 2
 
 n_eig: 64
 flag_encoder_loss: 1.0

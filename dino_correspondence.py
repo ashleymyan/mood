@@ -231,6 +231,423 @@ def match_centers_two_images(image_embed1, image_embed2, eigvec1, eigvec2,
     )
 
 
+# ===== Two-Step Clustering Functions =====
+
+def kway_cluster_per_image_two_step(
+    image_embeds,
+    n_superclusters,
+    n_subclusters_per_supercluster,
+    supercluster_gamma=None,
+    subcluster_gamma=None,
+    degree=0.5
+):
+    """
+    Perform 2-step hierarchical clustering on each image separately.
+    First finds superclusters, then subdivides each supercluster into subclusters.
+    
+    Args:
+        image_embeds: (batch, length, channels) - Image embeddings
+        n_superclusters: Number of coarse superclusters to find
+        n_subclusters_per_supercluster: Number of subclusters within each supercluster
+        supercluster_gamma: Gamma parameter for supercluster NCut (None = auto)
+        subcluster_gamma: Gamma parameter for subcluster NCut (None = auto)
+        degree: Degree parameter for gamma estimation
+        
+    Returns:
+        tuple: (supercluster_eigenvectors, subcluster_eigenvectors, subcluster_to_supercluster_mapping)
+            - supercluster_eigenvectors: (batch, length, n_superclusters)
+            - subcluster_eigenvectors: (batch, length, total_subclusters)
+            - subcluster_to_supercluster_mapping: (batch, total_subclusters) mapping each subcluster to its supercluster
+    """
+    batch_size = image_embeds.shape[0]
+    
+    # Step 1: Compute superclusters for each image
+    supercluster_eigenvectors = []
+    for i in range(batch_size):
+        eigenvector = _kway_cluster_single_image(
+            image_embeds[i], n_superclusters, supercluster_gamma, degree
+        )
+        supercluster_eigenvectors.append(eigenvector)
+    supercluster_eigenvectors = torch.stack(supercluster_eigenvectors)
+    
+    # Step 2: For each supercluster in each image, compute subclusters
+    subcluster_eigenvectors = []
+    subcluster_to_supercluster_mapping = []
+    
+    for img_idx in range(batch_size):
+        img_subclusters = []
+        img_mapping = []
+        
+        supercluster_labels = supercluster_eigenvectors[img_idx].argmax(-1)
+        
+        # For each supercluster, extract tokens and compute subclusters
+        for supercluster_idx in range(n_superclusters):
+            supercluster_mask = supercluster_labels == supercluster_idx
+            
+            if supercluster_mask.sum() == 0:
+                # Empty supercluster - create dummy subclusters
+                for sub_idx in range(n_subclusters_per_supercluster):
+                    img_mapping.append(supercluster_idx)
+                continue
+            
+            # Extract features belonging to this supercluster
+            supercluster_features = image_embeds[img_idx][supercluster_mask]
+            
+            # Perform clustering on this subset
+            if supercluster_features.shape[0] <= n_subclusters_per_supercluster:
+                # Too few tokens - each token becomes its own subcluster
+                n_actual_subclusters = supercluster_features.shape[0]
+                subcluster_labels = torch.arange(n_actual_subclusters).to(supercluster_features.device)
+                # Pad with dummy subclusters if needed
+                for sub_idx in range(n_subclusters_per_supercluster):
+                    img_mapping.append(supercluster_idx)
+            else:
+                # Perform subclustering
+                subcluster_eigvecs = _kway_cluster_single_image(
+                    supercluster_features, 
+                    n_subclusters_per_supercluster,
+                    subcluster_gamma,
+                    degree
+                )
+                subcluster_labels = subcluster_eigvecs.argmax(-1)
+                
+                # Track which supercluster these subclusters belong to
+                for sub_idx in range(n_subclusters_per_supercluster):
+                    img_mapping.append(supercluster_idx)
+            
+            # Store subcluster assignments for this supercluster
+            for sub_idx in range(n_subclusters_per_supercluster):
+                img_subclusters.append((supercluster_mask, subcluster_labels == sub_idx if supercluster_features.shape[0] > n_subclusters_per_supercluster else None))
+        
+        # Convert to full eigenvector representation
+        total_subclusters = n_superclusters * n_subclusters_per_supercluster
+        img_subcluster_eigvec = torch.zeros((image_embeds.shape[1], total_subclusters)).to(image_embeds.device)
+        
+        for subcluster_global_idx, (supercluster_mask, subcluster_mask) in enumerate(img_subclusters):
+            if subcluster_mask is not None:
+                # Combine masks: belongs to supercluster AND subcluster
+                final_mask = torch.zeros(image_embeds.shape[1], dtype=torch.bool).to(image_embeds.device)
+                supercluster_indices = torch.where(supercluster_mask)[0]
+                subcluster_within_super = torch.where(subcluster_mask)[0]
+                if len(subcluster_within_super) > 0:
+                    final_indices = supercluster_indices[subcluster_within_super]
+                    final_mask[final_indices] = True
+                    img_subcluster_eigvec[final_mask, subcluster_global_idx] = 1.0
+            # else: leave as zeros (empty subcluster)
+        
+        subcluster_eigenvectors.append(img_subcluster_eigvec)
+        subcluster_to_supercluster_mapping.append(torch.tensor(img_mapping))
+    
+    subcluster_eigenvectors = torch.stack(subcluster_eigenvectors)
+    subcluster_to_supercluster_mapping = torch.stack(subcluster_to_supercluster_mapping)
+    
+    return supercluster_eigenvectors, subcluster_eigenvectors, subcluster_to_supercluster_mapping
+
+
+def match_centers_two_step(
+    image_embed1,
+    image_embed2,
+    supercluster_eigvec1,
+    supercluster_eigvec2,
+    subcluster_eigvec1,
+    subcluster_eigvec2,
+    subcluster_to_supercluster_mapping1,
+    subcluster_to_supercluster_mapping2,
+    supercluster_match_method='hungarian',
+    subcluster_match_method='hungarian'
+):
+    """
+    Match clusters using 2-step hierarchical approach.
+    First matches superclusters, then matches subclusters only within matched superclusters.
+    
+    Args:
+        image_embed1, image_embed2: Image embeddings (length, channels)
+        supercluster_eigvec1, supercluster_eigvec2: Supercluster eigenvectors (length, n_superclusters)
+        subcluster_eigvec1, subcluster_eigvec2: Subcluster eigenvectors (length, total_subclusters)
+        subcluster_to_supercluster_mapping1, subcluster_to_supercluster_mapping2: (total_subclusters,)
+        supercluster_match_method: Matching method for superclusters
+        subcluster_match_method: Matching method for subclusters
+        
+    Returns:
+        np.ndarray: Mapping from image1 subclusters to image2 subclusters
+    """
+    n_superclusters = supercluster_eigvec1.shape[-1]
+    n_subclusters_total = subcluster_eigvec1.shape[-1]
+    
+    # Step 1: Match superclusters
+    supercluster_mapping = match_cluster_centers(
+        image_embed1, image_embed2,
+        supercluster_eigvec1, supercluster_eigvec2,
+        match_method=supercluster_match_method
+    )
+    
+    # Step 2: For each matched supercluster pair, match subclusters within them
+    subcluster_mapping = np.zeros(n_subclusters_total, dtype=np.int64)
+    
+    for supercluster1_idx in range(n_superclusters):
+        # Find which supercluster in image2 this maps to
+        supercluster2_idx = supercluster_mapping[supercluster1_idx]
+        
+        # Find all subclusters belonging to these superclusters
+        subclusters1_mask = (subcluster_to_supercluster_mapping1 == supercluster1_idx).cpu().numpy()
+        subclusters2_mask = (subcluster_to_supercluster_mapping2 == supercluster2_idx).cpu().numpy()
+        
+        subclusters1_indices = np.where(subclusters1_mask)[0]
+        subclusters2_indices = np.where(subclusters2_mask)[0]
+        
+        if len(subclusters1_indices) == 0 or len(subclusters2_indices) == 0:
+            # No subclusters in one or both superclusters - use identity mapping
+            for sub1_idx in subclusters1_indices:
+                if sub1_idx < len(subclusters2_indices):
+                    subcluster_mapping[sub1_idx] = subclusters2_indices[sub1_idx]
+                else:
+                    subcluster_mapping[sub1_idx] = subclusters2_indices[0] if len(subclusters2_indices) > 0 else 0
+            continue
+        
+        # Extract subcluster eigenvectors for matching
+        sub_eigvec1 = subcluster_eigvec1[:, subclusters1_indices]
+        sub_eigvec2 = subcluster_eigvec2[:, subclusters2_indices]
+        
+        # Compute cluster centers for these subclusters
+        cluster_labels1 = sub_eigvec1.argmax(-1).cpu()
+        cluster_labels2 = sub_eigvec2.argmax(-1).cpu()
+        
+        center_features1 = get_cluster_center_features(
+            image_embed1, cluster_labels1, len(subclusters1_indices)
+        )
+        center_features2 = get_cluster_center_features(
+            image_embed2, cluster_labels2, len(subclusters2_indices)
+        )
+        
+        # Match subclusters within this supercluster pair
+        if subcluster_match_method == 'hungarian':
+            local_mapping = hungarian_match_centers(center_features1, center_features2)
+        elif subcluster_match_method == 'argmin':
+            local_mapping = argmin_matching(center_features1, center_features2)
+        else:
+            raise ValueError(f"Unknown subcluster_match_method: {subcluster_match_method}")
+        
+        # Convert local mapping to global subcluster indices
+        for local_idx, global_idx1 in enumerate(subclusters1_indices):
+            global_idx2 = subclusters2_indices[local_mapping[local_idx]]
+            subcluster_mapping[global_idx1] = global_idx2
+    
+    return subcluster_mapping
+
+
+def kway_cluster_per_image_two_step_fgbg(
+    image_embeds,
+    n_foreground_subclusters,
+    n_background_subclusters,
+    supercluster_gamma=None,
+    subcluster_gamma=None,
+    degree=0.5
+):
+    """
+    Perform 2-step hierarchical clustering with automatic foreground/background separation.
+    First separates foreground (FG) and background (BG) using 2 clusters, identifying FG 
+    by the cluster with highest max eigenvector value. Then subdivides FG and BG separately.
+    
+    Args:
+        image_embeds: (batch, length, channels) - Image embeddings
+        n_foreground_subclusters: Number of subclusters within foreground
+        n_background_subclusters: Number of subclusters within background
+        supercluster_gamma: Gamma parameter for FG/BG clustering (None = auto)
+        subcluster_gamma: Gamma parameter for subcluster NCut (None = auto)
+        degree: Degree parameter for gamma estimation
+        
+    Returns:
+        tuple: (supercluster_eigenvectors, subcluster_eigenvectors, subcluster_to_supercluster_mapping, fg_indices)
+            - supercluster_eigenvectors: (batch, length, 2) - [BG, FG] clusters
+            - subcluster_eigenvectors: (batch, length, total_subclusters)
+            - subcluster_to_supercluster_mapping: (batch, total_subclusters) - 0=BG, 1=FG
+            - fg_indices: (batch,) - which supercluster index is foreground for each image
+    """
+    batch_size = image_embeds.shape[0]
+    n_superclusters = 2  # Always FG and BG
+    
+    # Step 1: Compute FG/BG separation for each image
+    supercluster_eigenvectors = []
+    fg_indices = []
+    
+    for i in range(batch_size):
+        eigenvector = _kway_cluster_single_image(
+            image_embeds[i], n_clusters=2, gamma=supercluster_gamma, degree=degree
+        )
+        supercluster_eigenvectors.append(eigenvector)
+        
+        # Identify foreground: cluster with highest max eigenvector value
+        fg_idx = eigenvector.max(0).values.argmax().item()
+        fg_indices.append(fg_idx)
+    
+    supercluster_eigenvectors = torch.stack(supercluster_eigenvectors)
+    fg_indices = torch.tensor(fg_indices)
+    
+    # Step 2: For each image, compute subclusters within FG and BG
+    subcluster_eigenvectors = []
+    subcluster_to_supercluster_mapping = []
+    
+    for img_idx in range(batch_size):
+        img_subclusters = []
+        img_mapping = []
+        
+        supercluster_labels = supercluster_eigenvectors[img_idx].argmax(-1)
+        fg_idx = fg_indices[img_idx].item()
+        bg_idx = 1 - fg_idx
+        
+        # Process BG and FG in order (BG first, then FG)
+        for is_foreground, n_subclusters in [(False, n_background_subclusters), (True, n_foreground_subclusters)]:
+            supercluster_idx = fg_idx if is_foreground else bg_idx
+            supercluster_mask = supercluster_labels == supercluster_idx
+            
+            # Mark which supercluster type (0=BG, 1=FG)
+            supercluster_type = 1 if is_foreground else 0
+            
+            if supercluster_mask.sum() == 0:
+                # Empty supercluster - create dummy subclusters
+                for sub_idx in range(n_subclusters):
+                    img_mapping.append(supercluster_type)
+                    img_subclusters.append((supercluster_mask, None))
+                continue
+            
+            # Extract features belonging to this supercluster
+            supercluster_features = image_embeds[img_idx][supercluster_mask]
+            
+            # Perform clustering on this subset
+            if supercluster_features.shape[0] <= n_subclusters:
+                # Too few tokens - each token becomes its own subcluster
+                n_actual_subclusters = supercluster_features.shape[0]
+                subcluster_labels = torch.arange(n_actual_subclusters).to(supercluster_features.device)
+                # Pad with dummy subclusters if needed
+                for sub_idx in range(n_subclusters):
+                    img_mapping.append(supercluster_type)
+                    if sub_idx < n_actual_subclusters:
+                        img_subclusters.append((supercluster_mask, subcluster_labels == sub_idx))
+                    else:
+                        img_subclusters.append((supercluster_mask, None))
+            else:
+                # Perform subclustering
+                subcluster_eigvecs = _kway_cluster_single_image(
+                    supercluster_features, 
+                    n_subclusters,
+                    subcluster_gamma,
+                    degree
+                )
+                subcluster_labels = subcluster_eigvecs.argmax(-1)
+                
+                # Store subcluster assignments
+                for sub_idx in range(n_subclusters):
+                    img_mapping.append(supercluster_type)
+                    img_subclusters.append((supercluster_mask, subcluster_labels == sub_idx))
+        
+        # Convert to full eigenvector representation
+        total_subclusters = n_background_subclusters + n_foreground_subclusters
+        img_subcluster_eigvec = torch.zeros((image_embeds.shape[1], total_subclusters)).to(image_embeds.device)
+        
+        for subcluster_global_idx, (supercluster_mask, subcluster_mask) in enumerate(img_subclusters):
+            if subcluster_mask is not None:
+                # Combine masks: belongs to supercluster AND subcluster
+                final_mask = torch.zeros(image_embeds.shape[1], dtype=torch.bool).to(image_embeds.device)
+                supercluster_indices = torch.where(supercluster_mask)[0]
+                subcluster_within_super = torch.where(subcluster_mask)[0]
+                if len(subcluster_within_super) > 0:
+                    final_indices = supercluster_indices[subcluster_within_super]
+                    final_mask[final_indices] = True
+                    img_subcluster_eigvec[final_mask, subcluster_global_idx] = 1.0
+            # else: leave as zeros (empty subcluster)
+        
+        subcluster_eigenvectors.append(img_subcluster_eigvec)
+        subcluster_to_supercluster_mapping.append(torch.tensor(img_mapping))
+    
+    subcluster_eigenvectors = torch.stack(subcluster_eigenvectors)
+    subcluster_to_supercluster_mapping = torch.stack(subcluster_to_supercluster_mapping)
+    
+    return supercluster_eigenvectors, subcluster_eigenvectors, subcluster_to_supercluster_mapping, fg_indices
+
+
+def match_centers_two_step_fgbg(
+    image_embed1,
+    image_embed2,
+    subcluster_eigvec1,
+    subcluster_eigvec2,
+    subcluster_to_supercluster_mapping1,
+    subcluster_to_supercluster_mapping2,
+    n_background_subclusters,
+    n_foreground_subclusters,
+    background_match_method='hungarian',
+    foreground_match_method='hungarian'
+):
+    """
+    Match clusters using 2-step FG/BG hierarchical approach.
+    FG and BG are automatically matched (no need for supercluster matching).
+    Subclusters are matched within their respective FG or BG groups.
+    
+    Args:
+        image_embed1, image_embed2: Image embeddings (length, channels)
+        subcluster_eigvec1, subcluster_eigvec2: Subcluster eigenvectors (length, total_subclusters)
+        subcluster_to_supercluster_mapping1, subcluster_to_supercluster_mapping2: (total_subclusters,) - 0=BG, 1=FG
+        n_background_subclusters: Number of background subclusters
+        n_foreground_subclusters: Number of foreground subclusters
+        background_match_method: Matching method for background subclusters
+        foreground_match_method: Matching method for foreground subclusters
+        
+    Returns:
+        np.ndarray: Mapping from image1 subclusters to image2 subclusters
+    """
+    total_subclusters = n_background_subclusters + n_foreground_subclusters
+    subcluster_mapping = np.zeros(total_subclusters, dtype=np.int64)
+    
+    # Process BG (supercluster_type=0) and FG (supercluster_type=1) separately
+    for supercluster_type in [0, 1]:  # 0=BG, 1=FG
+        # Find subclusters belonging to this supercluster type
+        subclusters1_mask = (subcluster_to_supercluster_mapping1 == supercluster_type).cpu().numpy()
+        subclusters2_mask = (subcluster_to_supercluster_mapping2 == supercluster_type).cpu().numpy()
+        
+        subclusters1_indices = np.where(subclusters1_mask)[0]
+        subclusters2_indices = np.where(subclusters2_mask)[0]
+        
+        if len(subclusters1_indices) == 0 or len(subclusters2_indices) == 0:
+            # No subclusters in one or both - use identity mapping
+            for sub1_idx in subclusters1_indices:
+                if sub1_idx < len(subclusters2_indices):
+                    subcluster_mapping[sub1_idx] = subclusters2_indices[sub1_idx]
+                else:
+                    subcluster_mapping[sub1_idx] = subclusters2_indices[0] if len(subclusters2_indices) > 0 else 0
+            continue
+        
+        # Extract subcluster eigenvectors for matching
+        sub_eigvec1 = subcluster_eigvec1[:, subclusters1_indices]
+        sub_eigvec2 = subcluster_eigvec2[:, subclusters2_indices]
+        
+        # Compute cluster centers for these subclusters
+        cluster_labels1 = sub_eigvec1.argmax(-1).cpu()
+        cluster_labels2 = sub_eigvec2.argmax(-1).cpu()
+        
+        center_features1 = get_cluster_center_features(
+            image_embed1, cluster_labels1, len(subclusters1_indices)
+        )
+        center_features2 = get_cluster_center_features(
+            image_embed2, cluster_labels2, len(subclusters2_indices)
+        )
+        
+        # Match subclusters within this FG/BG group
+        match_method = foreground_match_method if supercluster_type == 1 else background_match_method
+        
+        if match_method == 'hungarian':
+            local_mapping = hungarian_match_centers(center_features1, center_features2)
+        elif match_method == 'argmin':
+            local_mapping = argmin_matching(center_features1, center_features2)
+        else:
+            raise ValueError(f"Unknown match_method: {match_method}")
+        
+        # Convert local mapping to global subcluster indices
+        for local_idx, global_idx1 in enumerate(subclusters1_indices):
+            global_idx2 = subclusters2_indices[local_mapping[local_idx]]
+            subcluster_mapping[global_idx1] = global_idx2
+    
+    return subcluster_mapping
+
+
 # ===== Visualization Functions =====
 
 def plot_cluster_masks(image, eigenvector, cluster_order, hw=16):
