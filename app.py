@@ -1592,6 +1592,95 @@ def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Ima
     return interpolated_images
 
 
+def perform_two_image_interpolation_input_space(
+    image1: Image.Image,
+    image2: Image.Image,
+    model: CompressionModel,
+    interpolation_weights: List[float],
+    n_clusters: int = 20,
+    match_method: str = 'hungarian',
+    use_unit_norm: bool = False,
+    use_dino_matching: bool = True,
+    seed: Optional[int] = None,
+    config_path: str = DEFAULT_CONFIG_PATH
+) -> List[Image.Image]:
+    """
+    Interpolate between two images in the input space (DINO space).
+    
+    This method performs interpolation directly in the DINO feature space (input space),
+    then encodes the interpolated features through the compression model and decodes
+    them to the CLIP space (output space) for image generation.
+    
+    The key difference from `perform_two_image_interpolation` is:
+    - Standard interpolation: Encode A and B to mood space → Interpolate in mood space → Decode to CLIP
+    - Input space interpolation: Interpolate A and B in DINO space → Encode to mood space → Decode to CLIP
+    
+    Args:
+        image1, image2: Input PIL Images
+        model: Trained compression model
+        interpolation_weights: Weights for interpolation (0 = image1, 1 = image2)
+        n_clusters: Number of clusters for correspondence matching
+        match_method: Method for cluster matching ('hungarian' or 'argmin')
+        use_unit_norm: Whether to normalize direction vectors
+        use_dino_matching: Whether to use DINO-based matching or simple linear interpolation
+        seed: Random seed for generation
+        config_path: Path to configuration file
+        
+    Returns:
+        List[Image.Image]: Generated interpolated images
+    """
+    config = load_config(config_path)
+    clear_gpu_memory()
+    
+    # Prepare images and extract DINO features (input space)
+    images = torch.stack([dino_image_transform(img) for img in [image1, image2]])
+    dino_image_embeds = extract_dino_features(images)
+    
+    if use_dino_matching:
+        # Use correspondence-based direction in DINO space
+        cluster_eigenvectors = kway_cluster_per_image(dino_image_embeds, n_clusters=n_clusters, gamma=None)
+        
+        a_to_b_mapping = match_centers_two_images(
+            dino_image_embeds[0], dino_image_embeds[1],
+            cluster_eigenvectors[0], cluster_eigenvectors[1],
+            match_method=match_method
+        )
+        
+        # Compute direction field in DINO space (input space)
+        direction_field = compute_direction_from_two_images(
+            dino_image_embeds, cluster_eigenvectors, a_to_b_mapping, use_unit_norm
+        )
+    else:
+        # Simple linear interpolation in DINO space
+        direction_field = dino_image_embeds[1] - dino_image_embeds[0]
+    
+    # Generate interpolated images
+    ip_model = load_ipadapter(version=config.ipadapter_version)
+    
+    generated_images = []
+    for weight in interpolation_weights:
+        # Interpolate in DINO space (input space)
+        interpolated_dino = dino_image_embeds[0] + direction_field * weight
+        
+        # Encode interpolated DINO features to compressed mood space
+        compressed_embedding = model.encoder(interpolated_dino)
+        
+        # Decode from mood space to CLIP space (output space)
+        decompressed_embedding = model.decoder(compressed_embedding)
+        
+        # Generate images from CLIP embeddings
+        batch_images = generate_images_from_clip_embeddings(
+            ip_model, decompressed_embedding, num_samples=1, seed=seed
+        )
+        generated_images.extend(batch_images)
+    
+    # Clean up
+    del ip_model
+    clear_gpu_memory()
+    
+    return generated_images
+
+
 # Apply HuggingFace Spaces GPU decorator if available
 if USE_HUGGINGFACE_ZEROGPU:
     perform_three_image_analogy = spaces.GPU(duration=60)(perform_three_image_analogy)
