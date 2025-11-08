@@ -14,3 +14,7 @@ __pycache__/
 *.pyw
 images/sit.png
 .trash
+*.zip
+images/cup_torus/
+images/cup_torus_no_bg/
+*.pt

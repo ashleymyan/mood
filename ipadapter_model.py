@@ -199,7 +199,7 @@ def load_stable_diffusion_pipeline(device: str = "cuda") -> StableDiffusionPipel
 
 
 @torch.inference_mode()
-def load_ip_adapter_model(device: str = "cuda") -> IPAdapterPlus:
+def load_ip_adapter_model(device: str = "cuda", sd_only: bool = False) -> IPAdapterPlus:
     # Model and checkpoint paths
     base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
     vae_model_path = "stabilityai/sd-vae-ft-mse"
@@ -227,8 +227,11 @@ def load_ip_adapter_model(device: str = "cuda") -> IPAdapterPlus:
         scheduler=noise_scheduler,
         vae=vae,
         feature_extractor=None,
-        safety_checker=None
+        safety_checker=None,
     )
+    
+    if sd_only:
+        return pipeline
     
     # Initialize IP-Adapter with 16 tokens for better image conditioning
     ip_model = IPAdapterPlus(

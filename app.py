@@ -1558,7 +1558,8 @@ def perform_n_image_interpolation_per_cluster(
     return generated_images
 
 def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Image, interpolation_weights: List[float], n_clusters: int = 20, match_method: str = 'hungarian', 
-                                          use_unit_norm: bool = False, use_multiscale_matching: bool = False, dino_matching: bool = True, seed: Optional[int] = None, config_path: str = DEFAULT_CONFIG_PATH):
+                                          use_unit_norm: bool = False, use_multiscale_matching: bool = False, dino_matching: bool = True, seed: Optional[int] = None, config_path: str = DEFAULT_CONFIG_PATH,
+                                          predefined_matching=None):
     config = load_config(config_path)
     clip_images = torch.stack([clip_image_transform(image) for image in [image1, image2]])
     dino_images = torch.stack([dino_image_transform(image) for image in [image1, image2]])
@@ -1570,9 +1571,12 @@ def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Ima
 
     b, l, c = input_embeds.shape
     joint_eigvecs, joint_rgbs = ncut_tsne_multiple_images(input_embeds, n_eig=30, gamma=None)
-    single_eigvecs = kway_cluster_per_image(input_embeds, n_clusters=n_clusters, gamma=None)
-
-    A_to_B = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], single_eigvecs[0], single_eigvecs[1], match_method=match_method)
+    
+    if predefined_matching is None:
+        single_eigvecs = kway_cluster_per_image(input_embeds, n_clusters=n_clusters, gamma=None)
+        A_to_B = match_centers_two_images(dino_image_embeds[0], dino_image_embeds[1], single_eigvecs[0], single_eigvecs[1], match_method=match_method)
+    else:
+        single_eigvecs, A_to_B = predefined_matching
 
     if use_multiscale_matching:
         direction = multiscale_directions(dino_image_embeds, clip_image_embeds, n_cluster_list=[10, 30], n_repeats=1)
