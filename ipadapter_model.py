@@ -293,8 +293,10 @@ def generate_images_from_clip_embeddings(ip_model : IPAdapterPlus,
     clip_embeddings = clip_embeddings.half().to(ip_model.device)
     
     # Generate images using IP-Adapter
+    negative_prompt = "nsfw, lowres, (bad), text, error, fewer, extra, missing, worst quality, jpeg artifacts, low quality, watermark, unfinished, displeasing, oldest, early, chromatic aberration, signature, extra digits, artistic error, username, scan, [abstract]"
     generated_images = ip_model.generate(
         clip_image_embeds=clip_embeddings,
+        negative_prompt=negative_prompt,
         pil_image=None,
         num_samples=num_samples,
         num_inference_steps=num_inference_steps,

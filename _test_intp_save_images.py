@@ -82,7 +82,7 @@ interpolated_images2 = interpolate_two_images_no_compression(
     image2=image2, 
     interpolation_weights=interpolation_weights,
     n_clusters=10,
-    dino_matching=False,
+    use_dino_matching=False,
     config_path=config_path,
     predefined_matching=None,
 )
@@ -146,7 +146,7 @@ for _ in range(10):
         image2=image2, 
         interpolation_weights=interpolation_weights,
         n_clusters=10,
-        dino_matching=True,
+        use_dino_matching=True,
         config_path=config_path,
         predefined_matching=None,
     )

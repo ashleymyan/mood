@@ -182,6 +182,70 @@ def train_mood_space(pil_images: List[Image.Image],
     return model, trainer
 
 
+def train_clip_clip_ablation(pil_images: List[Image.Image], 
+                            learning_rate: float = 0.001,
+                            training_steps: int = 5000, 
+                            mlp_width: int = 512,
+                            mlp_layers: int = 4, 
+                            n_eig: int = None,
+                            mood_dimension: Optional[int] = None,
+                            config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[CompressionModel, object]:
+    """
+    Train a Mood Space compression model from input images.
+    
+    This function extracts DINO and CLIP features from the input images,
+    estimates the intrinsic dimensionality if not provided, and trains
+    a neural compression model to learn a meaningful embedding space.
+    
+    Args:
+        pil_images: List of PIL Images for training
+    """
+    # Load and configure training parameters
+    config = load_config(config_path)
+    
+    # Process input images
+    images = load_gradio_images_helper(pil_images)
+    if len(images) == 0:
+        raise ValueError("No valid images provided for training")
+    
+    # Transform images for feature extraction
+    dino_input_images = torch.stack([dino_image_transform(image) for image in images])
+    dino_input_images = torch.nn.functional.interpolate(dino_input_images, size=(256, 256), mode='bilinear', align_corners=False)
+    clip_input_images = torch.stack([clip_image_transform(image) for image in images])
+    
+    # Extract features using pre-trained models
+    logging.info("Extracting DINO features...")
+    dino_image_embeds = extract_dino_features(dino_input_images)
+    
+    logging.info("Extracting CLIP features...")
+    clip_image_embeds = extract_clip_features(clip_input_images, ipadapter_version=config.ipadapter_version)
+    
+    # Determine target dimensionality
+    if mood_dimension is None:
+        flattened_features = dino_image_embeds.flatten(end_dim=-2)
+        estimated_dim = estimate_intrinsic_dimension(flattened_features)
+        mood_dimension = int(estimated_dim)
+        logging.info(f"Estimated intrinsic dimension: {mood_dimension}")
+    else:
+        logging.info(f"Using user-specified dimension: {mood_dimension}")
+
+    config.mood_dim = mood_dimension
+    config.lr = learning_rate
+    config.steps = training_steps
+    config.latent_dim = mlp_width
+    config.n_layer = mlp_layers
+    if n_eig is not None:
+        config.n_eig = n_eig
+    
+    # Create and train model
+    model = CompressionModel(config, enable_gradio_progress=True, downsample_factor=1)
+    trainer = train_compression_model(
+        model, config, clip_image_embeds, clip_image_embeds
+    )
+    
+    return model, trainer
+
+
 # Apply HuggingFace Spaces GPU decorator if available
 if USE_HUGGINGFACE_ZEROGPU:
     train_mood_space = spaces.GPU(duration=60)(train_mood_space)
@@ -984,7 +1048,8 @@ def perform_two_image_interpolation(image1: Image.Image,
                                   seed: Optional[int] = None,
                                   config_path: str = DEFAULT_CONFIG_PATH,
                                   return_matching: bool = False,
-                                  predefined_matching = None) -> List[Image.Image]:
+                                  predefined_matching = None,
+                                  use_clip_clip_ablation: bool = False) -> List[Image.Image]:
     """
     Interpolate between two images using the trained compression model.
     
@@ -1016,9 +1081,17 @@ def perform_two_image_interpolation(image1: Image.Image,
     clear_gpu_memory()
     
     # Prepare images and extract features
-    images = torch.stack([dino_image_transform(img) for img in [image1, image2]])
-    dino_image_embeds = extract_dino_features(images)
-    compressed_image_embeds = model.encoder(dino_image_embeds)
+    if use_clip_clip_ablation:
+        dino_images = torch.stack([dino_image_transform(img) for img in [image1, image2]])
+        dino_images = torch.nn.functional.interpolate(dino_images, size=(256, 256), mode='bilinear', align_corners=False)
+        dino_image_embeds = extract_dino_features(dino_images)
+        clip_images = torch.stack([clip_image_transform(img) for img in [image1, image2]])
+        clip_image_embeds = extract_clip_features(clip_images, ipadapter_version=config.ipadapter_version)
+        compressed_image_embeds = model.encoder(clip_image_embeds)
+    else:
+        images = torch.stack([dino_image_transform(img) for img in [image1, image2]])
+        dino_image_embeds = extract_dino_features(images)
+        compressed_image_embeds = model.encoder(dino_image_embeds)
     
     if use_multiscale_matching:
         direction_field = multiscale_directions(dino_image_embeds, compressed_image_embeds, n_cluster_list=[10, 30], n_repeats=1)
@@ -1558,7 +1631,7 @@ def perform_n_image_interpolation_per_cluster(
     return generated_images
 
 def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Image, interpolation_weights: List[float], n_clusters: int = 20, match_method: str = 'hungarian', 
-                                          use_unit_norm: bool = False, use_multiscale_matching: bool = False, dino_matching: bool = True, seed: Optional[int] = None, config_path: str = DEFAULT_CONFIG_PATH,
+                                          use_unit_norm: bool = False, use_multiscale_matching: bool = False, use_dino_matching: bool = True, seed: Optional[int] = None, config_path: str = DEFAULT_CONFIG_PATH,
                                           predefined_matching=None):
     config = load_config(config_path)
     clip_images = torch.stack([clip_image_transform(image) for image in [image1, image2]])
@@ -1580,7 +1653,7 @@ def interpolate_two_images_no_compression(image1: Image.Image, image2: Image.Ima
 
     if use_multiscale_matching:
         direction = multiscale_directions(dino_image_embeds, clip_image_embeds, n_cluster_list=[10, 30], n_repeats=1)
-    elif dino_matching:
+    elif use_dino_matching:
         direction = compute_direction_from_two_images(clip_image_embeds, single_eigvecs, A_to_B, use_unit_norm=use_unit_norm)
     else:
         direction = clip_image_embeds[1] - clip_image_embeds[0]

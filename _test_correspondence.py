@@ -6,8 +6,9 @@ from dino_correspondence import _kway_cluster_single_image
 # 
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
-path1 = "./images/playviolin_hr.png"
-path2 = "./images/playguitar_hr.png"
+basename = "04624"
+path1 = f"./experiments/TTL/left/{basename}.jpg"
+path2 = f"./experiments/TTL/right/{basename}.jpg"
 # path1 = "./images/duck1.jpg"
 # path2 = "./images/toilet_paper.jpg"
 image1 = Image.open(path1).resize((512, 512), resample=Image.Resampling.LANCZOS).convert("RGB")
@@ -38,16 +39,18 @@ a_cluster_image = a_cluster_labels[1:].reshape(32, 32)
 b_cluster_image = mapped_b_cluster_labels[1:].reshape(32, 32)
 # %%
 import matplotlib.pyplot as plt
-fig, axes = plt.subplots(1, 2, figsize=(15, 6))
-axes[0].imshow(a_cluster_image, cmap='tab10_r')
-# axes[0].set_title('A Cluster')
-axes[0].axis('off')
-axes[1].imshow(b_cluster_image, cmap='tab10_r')
-# axes[1].set_title('B Cluster')
-axes[1].axis('off')
-# plt.suptitle(f'n_clusters1={n_clusters1}, n_clusters2={n_clusters2}')
-# plt.tight_layout()
+from matplotlib.gridspec import GridSpec
+fig = plt.figure(figsize=(15, 6))
+gs = GridSpec(1, 5, figure=fig, width_ratios=[1, 1, 0.31, 1, 1], wspace=0.02, left=0, right=1, top=1, bottom=0)
+ax0 = fig.add_subplot(gs[0, 0])
+ax1 = fig.add_subplot(gs[0, 1])
+ax2 = fig.add_subplot(gs[0, 3])
+ax3 = fig.add_subplot(gs[0, 4])
+for ax in [ax0, ax1, ax2, ax3]:
+    ax.axis('off')
+ax0.imshow(image1)
+ax1.imshow(a_cluster_image, cmap='tab10_r')
+ax2.imshow(b_cluster_image, cmap='tab10_r')
+ax3.imshow(image2)
 plt.show()
 #%%
-display(image1)
-# %%

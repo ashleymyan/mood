@@ -25,7 +25,7 @@ interpolated_images = interpolate_two_images_no_compression(
     n_clusters=10, 
     match_method='hungarian',
     use_multiscale_matching=True,
-    dino_matching=True,
+    use_dino_matching=True,
     config_path=config_path
 )
 all_images = [image1] + interpolated_images + [image2]

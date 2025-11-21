@@ -146,11 +146,11 @@ class CompressionModel(pl.LightningModule):
     through various loss functions including NCut-based losses.
     """
     
-    def __init__(self, config: DictConfig, enable_gradio_progress: bool = False):
+    def __init__(self, config: DictConfig, enable_gradio_progress: bool = False, downsample_factor: int = 2):
         super().__init__()
         
         self.config = config
-        self.downsample_factor = 2
+        self.downsample_factor = downsample_factor
         
         self.encoder = MultiLayerPerceptron(
             config.in_dim, config.mood_dim, config.n_layer, config.latent_dim
