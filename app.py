@@ -119,7 +119,7 @@ def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List
 
 # ===== Core Training Functions =====
 
-def train_mood_space(pil_images: List[Image.Image], 
+def train_vibe_space(pil_images: List[Image.Image], 
                     learning_rate: float = 0.001,
                     training_steps: int = 5000, 
                     mlp_width: int = 512,
@@ -248,7 +248,7 @@ def train_clip_clip_ablation(pil_images: List[Image.Image],
 
 # Apply HuggingFace Spaces GPU decorator if available
 if USE_HUGGINGFACE_ZEROGPU:
-    train_mood_space = spaces.GPU(duration=60)(train_mood_space)
+    train_vibe_space = spaces.GPU(duration=60)(train_vibe_space)
 
 
 # ===== Direction Finding Functions =====
@@ -1924,7 +1924,7 @@ def create_gradio_interface():
                             return None, None
                         
                         try:
-                            model, trainer = train_mood_space(images, lr, steps, width, layers, n_eig)
+                            model, trainer = train_vibe_space(images, lr, steps, width, layers, n_eig)
                             loss_plot = plot_training_loss(model)
                             gr.Info("Training completed successfully!")
                             return model, loss_plot

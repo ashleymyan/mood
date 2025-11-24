@@ -1,3 +1,0 @@
-flag_encoder_loss: 0.0
-flag_decoder_loss: 0.0
-recon_loss: 1.0

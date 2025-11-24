@@ -1,5 +1,5 @@
 ---
-title: MoodSpace
+title: VibeSpace
 emoji: 🚀
 colorFrom: purple
 colorTo: yellow
@@ -9,7 +9,6 @@ app_file: app.py
 pinned: false
 ---
 
-This repository is for the local deployment of the [HuggingFace Demo](https://huggingface.co/spaces/huzey/MoodSpace)
 
 step1: pip install -r ./requirements.txt
 

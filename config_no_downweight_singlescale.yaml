@@ -1,6 +1,0 @@
-n_eig: 64
-flag_encoder_loss: 1.0
-flag_decoder_loss: 1.0
-recon_loss: 1.0
-
-single_scale_flag: true
