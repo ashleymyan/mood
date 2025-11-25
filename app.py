@@ -3,17 +3,14 @@ import os
 from typing import List, Union
 
 import gradio as gr
-import torch
 from PIL import Image
 import numpy as np
 
 from vibe_blending import run_vibe_blend_safe
 
-# Configuration
 USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "false").lower() == "true"
 DEFAULT_CONFIG_PATH = "./config.yaml"
 
-# Optional HuggingFace Spaces integration
 if USE_HUGGINGFACE_ZEROGPU:
     try:
         import spaces
@@ -64,9 +61,6 @@ def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List
 
 
 def create_gradio_interface():
-    """Create and configure the main Gradio interface."""
-
-    # Create Gradio interface
     theme = gr.themes.Base(
         spacing_size='md', 
         text_size='lg', 
@@ -74,7 +68,6 @@ def create_gradio_interface():
         neutral_hue='slate', 
         secondary_hue='pink'
     )
-    
     custom_css = """
     .gradio-container {
         max-width: 1000px !important;
@@ -83,9 +76,7 @@ def create_gradio_interface():
     """
     
     demo = gr.Blocks(theme=theme, css=custom_css)
-    
     with demo:
-
         gr.Markdown("""
         ## Vibe Blending Demo
         
@@ -179,13 +170,9 @@ def create_gradio_interface():
     return demo
 
 
-# ===== Main Application Entry Point =====
-
 if __name__ == "__main__":
-    # Configure logging
     logging.basicConfig(level=logging.INFO)
     
-    # Create and launch the Gradio interface
     demo = create_gradio_interface()
     demo.launch(
         share=True,
