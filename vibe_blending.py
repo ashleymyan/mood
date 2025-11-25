@@ -24,13 +24,14 @@ def load_config(config_path: str):
     return cfg_base
 
 
-def run_vibe_blend_safe(image1, image2, extra_images, config_path, interpolation_weights: List[float], n_clusters: int = 20):
-    
+def run_vibe_blend_safe(image1, image2, extra_images, negative_images, config_path, interpolation_weights: List[float], n_clusters: int = 25):
+    # TODO: implement negative images
     success = False
     while not success:
         try:
             model, trainer = run_vibe_space_training(
-                pil_images=[image1, image2, *extra_images],
+                positive_images=[image1, image2, *extra_images],
+                negative_images=negative_images,
                 config_path=config_path,
             )
             success = True
@@ -58,10 +59,11 @@ def run_vibe_blend_safe(image1, image2, extra_images, config_path, interpolation
     return blended_images
 
 
-def run_vibe_blend_not_safe(image1, image2, extra_images, config_path, interpolation_weights: List[float], n_clusters: int = 20):
+def run_vibe_blend_not_safe(image1, image2, extra_images, negative_images, config_path, interpolation_weights: List[float], n_clusters: int = 20):
     
     model, trainer = run_vibe_space_training(
-        pil_images=[image1, image2, *extra_images],
+        positive_images=[image1, image2, *extra_images],
+        negative_images=negative_images,
         config_path=config_path,
     )
     blended_images = generate_blend_images(
@@ -74,8 +76,9 @@ def run_vibe_blend_not_safe(image1, image2, extra_images, config_path, interpola
     return blended_images
 
 
-def run_vibe_space_training(pil_images: List[Image.Image], 
-                    config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[VibeSpaceModel, object]:
+def run_vibe_space_training(positive_images: List[Image.Image], 
+                            negative_images: List[Image.Image],  # TODO: implement negative images
+                            config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[VibeSpaceModel, object]:
     """
     Train a Mood Space compression model from input images.
     
@@ -90,8 +93,8 @@ def run_vibe_space_training(pil_images: List[Image.Image],
     config = load_config(config_path)
     
     # Transform images for feature extraction
-    dino_input_images = torch.stack([dino_image_transform(image) for image in pil_images])
-    clip_input_images = torch.stack([clip_image_transform(image) for image in pil_images])
+    dino_input_images = torch.stack([dino_image_transform(image) for image in positive_images])
+    clip_input_images = torch.stack([clip_image_transform(image) for image in positive_images])
     
     # Extract features using pre-trained models
     dino_image_embeds = extract_dino_features(dino_input_images)
@@ -103,7 +106,7 @@ def run_vibe_space_training(pil_images: List[Image.Image],
     hidden_dim = int(estimated_dim)
     config.vibe_dim = hidden_dim
     
-    if len(pil_images) > 2:
+    if len(positive_images) > 2:
         # increase training steps for extra images
         config.steps = config.steps * 2
     
@@ -150,12 +153,12 @@ def _compute_direction_from_two_images(image_embeds: torch.Tensor,
 
 
 def generate_blend_images(image1: Image.Image, 
-                            image2: Image.Image,
-                            model: VibeSpaceModel, 
-                            interpolation_weights: List[float],
-                            n_clusters: int = 20, 
-                            seed: Optional[int] = None,
-                            ) -> List[Image.Image]:
+                        image2: Image.Image,
+                        model: VibeSpaceModel, 
+                        interpolation_weights: List[float],
+                        n_clusters: int = 20, 
+                        seed: Optional[int] = None,
+                        ) -> List[Image.Image]:
     """
     Interpolate between two images using the trained compression model.
     

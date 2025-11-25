@@ -24,9 +24,6 @@ from ip_adapter import IPAdapterPlus, IPAdapterPlusXL
 # ===== Image Utility Functions =====
 
 def create_image_grid(images: List[Image.Image], rows: int, cols: int) -> Image.Image:
-    if len(images) != rows * cols:
-        raise ValueError(f"Number of images ({len(images)}) must equal rows * cols ({rows * cols})")
-
     # Get dimensions from first image (assumes all images are same size)
     width, height = images[0].size
     
