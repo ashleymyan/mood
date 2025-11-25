@@ -1,5 +1,5 @@
 in_dim: 768 #1024 #768 #384
-mood_dim: -1
+vibe_dim: -1
 out_dim: 1280
 latent_dim: 512
 n_layer: 2
@@ -11,10 +11,6 @@ recon_loss: 1.0
 
 single_scale_flag: false
 
-eigvec_loss: 0.0
-repulsion_loss: 0.0
-boundary_loss: 0.0
-
 log_dir: /tmp/logs/
 name: debug
 
@@ -23,4 +19,5 @@ ipadapter_version: sd15  # sdxl, sd15
 steps: 1000
 batch_size: 8
 n_negative_sample: 100
+n_sample_eigsolve: 2000
 lr: 0.001

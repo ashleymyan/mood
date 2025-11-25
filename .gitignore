@@ -19,3 +19,4 @@ images/cup_torus/
 images/cup_torus_no_bg/
 *.pt
 models/
+.gradio/

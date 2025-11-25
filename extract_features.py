@@ -133,15 +133,3 @@ def extract_clip_features(images: torch.Tensor, batch_size: int = DEFAULT_BATCH_
 
     return all_features
 
-
-# ===== Legacy Function Aliases =====
-
-# Maintain backward compatibility with existing code
-extract_dino_image_embeds = extract_dino_features
-extract_clip_image_embeds = extract_clip_features
-
-# Legacy transform aliases
-dino_img_transform = dino_image_transform
-clip_img_transform = clip_image_transform
-img_transform_inv = image_inverse_transform
-

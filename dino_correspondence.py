@@ -11,7 +11,7 @@ from PIL import Image
 from scipy.optimize import linear_sum_assignment
 from einops import rearrange
 
-from extract_features import img_transform_inv
+from extract_features import image_inverse_transform
 from ipadapter_model import image_grid
 from ncut_pytorch import ncut_fn, kway_ncut, convert_to_lab_color
 from ncut_pytorch.color import tsne_color
@@ -658,7 +658,7 @@ def plot_cluster_masks(image, eigenvector, cluster_order, hw=16):
     # cluster_order is (n_eig), the order of the clusters
     """
     cluster_images = []
-    base_img = img_transform_inv(image).resize(
+    base_img = image_inverse_transform(image).resize(
         (128, 128), resample=Image.Resampling.NEAREST
     )
     
@@ -695,7 +695,7 @@ def create_image_grid_row(image, eigenvector, cluster_order, discrete_colors,
     cluster_images = plot_cluster_masks(image, eigenvector, cluster_order, hw)
     
     # Prepare base images
-    base_img = img_transform_inv(image).resize(
+    base_img = image_inverse_transform(image).resize(
         (128, 128), resample=Image.Resampling.NEAREST
     )
     
