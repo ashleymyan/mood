@@ -135,20 +135,28 @@ def create_gradio_interface():
         blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results])
         
         example_cases = [
-            [Image.open("./images/playviolin_hr.png"), Image.open("./images/playguitar_hr.png"), [], []],
-            [Image.open("./images/input_cat.png"), Image.open("./images/input_bread.png"), [], []],
-            [Image.open("./images/02140_left.jpg"), Image.open("./images/02140_right.jpg"), [], []],
-            #[Image.open("./images/02718_l.jpg"), Image.open("./images/02718_r.jpg"), [], []],
-            [Image.open("./images/03969_l.jpg"), Image.open("./images/03969_r.jpg"), [], []],
-            [Image.open("./images/04963_l.jpg"), Image.open("./images/04963_r.jpg"), [], []],
-            #[Image.open("./images/05358_l.jpg"), Image.open("./images/05358_r.jpg"), [], []],
-            [Image.open("./images/00436_l.jpg"), Image.open("./images/00436_r.jpg"), [], []],
-            [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg"), [], []],
-            [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg"), [Image.open("./images/archi/extra1.jpg"), Image.open("./images/archi/extra2.jpg"), Image.open("./images/archi/extra3.jpg")], []],
-            [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear2.jpg"), [], [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear1.jpg")]],
+            [Image.open("./images/playviolin_hr.png"), Image.open("./images/playguitar_hr.png")],
+            [Image.open("./images/input_cat.png"), Image.open("./images/input_bread.png")],
+            [Image.open("./images/02140_left.jpg"), Image.open("./images/02140_right.jpg")],
+            #[Image.open("./images/02718_l.jpg"), Image.open("./images/02718_r.jpg")],
+            [Image.open("./images/03969_l.jpg"), Image.open("./images/03969_r.jpg")],
+            [Image.open("./images/04963_l.jpg"), Image.open("./images/04963_r.jpg")],
+            #[Image.open("./images/05358_l.jpg"), Image.open("./images/05358_r.jpg")],
+            [Image.open("./images/00436_l.jpg"), Image.open("./images/00436_r.jpg")],
+            [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg")],
         ]
-        gr.Examples(examples=example_cases, inputs=[input1, input2, extra_images, negative_images], outputs=[blending_results])
-            
+        gr.Examples(examples=example_cases, label="Example Cases", inputs=[input1, input2], outputs=[blending_results])
+        
+        extra_image_examples = [
+            [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg"), [Image.open("./images/archi/extra1.jpg"), Image.open("./images/archi/extra2.jpg"), Image.open("./images/archi/extra3.jpg")]],
+        ]
+        gr.Examples(examples=extra_image_examples, label="Extra Image Examples", inputs=[input1, input2, extra_images], outputs=[blending_results])
+        
+        negative_image_examples = [
+            [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear2.jpg"), [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear1.jpg")]],
+        ]
+        gr.Examples(examples=negative_image_examples, label="Negative Image Examples", inputs=[input1, input2, negative_images], outputs=[blending_results])
+        
     return demo
 
 
