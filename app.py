@@ -9,7 +9,7 @@ import numpy as np
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
 
-USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "false").lower() == "true"
+USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "false").lower() == "false" #"true"
 DEFAULT_CONFIG_PATH = "./config.yaml"
 
 if USE_HUGGINGFACE_ZEROGPU:
@@ -86,7 +86,7 @@ def create_gradio_interface():
         2. Set the start and end α values to control the interpolation weight
         3. (optional) Upload extra images that help to find the commonalities between the input images
         4. (optional) Upload negative images that help to avoid unwanted attributes
-        5. enjoy the creativity!
+        5. Enjoy the creativity!
         """)
         with gr.Row():
             with gr.Column():
@@ -117,7 +117,16 @@ def create_gradio_interface():
             extra_images = load_gradio_images_helper(extra_images)
             negative_images = load_gradio_images_helper(negative_images)
 
-            # TODO: implement negative images
+            if extra_images is None:
+                extra_images = []
+            elif isinstance(extra_images, Image.Image):
+                extra_images = [extra_images]
+
+            if negative_images is None:
+                negative_images = []
+            elif isinstance(negative_images, Image.Image):
+                negative_images = [negative_images]
+
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
             blended_images = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
             blended_images = create_image_grid(blended_images, rows=np.ceil(len(blended_images)/4).astype(int), cols=4)

@@ -9,6 +9,9 @@ flag_encoder_loss: 1.0
 flag_decoder_loss: 0.01
 recon_loss: 1.0
 
+negative_beta: 1.0
+do_decoder_negative_flag: false
+
 single_scale_flag: false
 
 log_dir: /tmp/logs/

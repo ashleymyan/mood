@@ -8,7 +8,7 @@ normalized cuts (NCut).
 
 import gc
 from collections import defaultdict
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -178,14 +178,27 @@ class VibeSpaceModel(pl.LightningModule):
             recent_loss = self.loss_history['recon'][-1]
             self.progress_tracker(progress, desc=f"Training Vibe Space, loss = {recent_loss:.4f}")
 
-        input_features, target_features = batch
+        positive_features, negative_features, target_features, negative_mask = batch
+        negative_mask = negative_mask.bool()
+        has_negatives = bool(negative_mask.any().item())
+
+        if has_negatives:
+            if bool(negative_mask.all().item()):
+                batch_negative_features = negative_features
+            else:
+                batch_negative_features = negative_features[negative_mask]
+        else:
+            batch_negative_features = None
         
-        compressed_features = self.encoder(input_features)
+        compressed_features = self.encoder(positive_features)
         reconstructed_features = self.decoder(compressed_features)
         
         
         total_loss = self._compute_total_loss(
-            input_features, target_features, compressed_features,
+            positive_features,
+            batch_negative_features,
+            target_features,
+            compressed_features,
             reconstructed_features,
         )
         
@@ -194,13 +207,21 @@ class VibeSpaceModel(pl.LightningModule):
     
     def _compute_ncut_eigenvectors(self, features: torch.Tensor) -> torch.Tensor:
         """Compute NCut eigenvectors for features."""
-        # features is (batch, length, channels)
-        if len(features) > 0:
-            eigenvectors, _ = compute_ncut_eigenvectors(features, self.config.n_eig)
+        # Accept inputs shaped either (batch, length, channels) or (length, channels)
+        flattened_features = features
+        if flattened_features.dim() >= 3:
+            flattened_features = flattened_features.flatten(0, 1)
+        elif flattened_features.dim() == 1:
+            # rbf_affinity expects at least 2D; treat single vector as one sample with channels
+            flattened_features = flattened_features.unsqueeze(0)
+
+        if flattened_features.numel() > 0 and flattened_features.dim() == 2:
+            eigenvectors, _ = compute_ncut_eigenvectors(flattened_features, self.config.n_eig)
             return eigenvectors
         else:
             # Return zero tensor if no features
-            return torch.zeros((1, self.config.n_eig), device=features.device)
+            device = features.device if isinstance(features, torch.Tensor) else 'cpu'
+            return torch.zeros((1, self.config.n_eig), device=device)
     
     def _compute_multiscale_similarity(self, eigenvectors: torch.Tensor, 
                                       start_n_eig: int = 4, step_mult: int = 2) -> torch.Tensor:
@@ -226,22 +247,31 @@ class VibeSpaceModel(pl.LightningModule):
         
         return total_similarity / num_scales if num_scales > 0 else total_similarity
     
-    def _compute_flag_decoder_loss(self, compressed_features: torch.Tensor, reconstructed_features: torch.Tensor) -> torch.Tensor:
+    def _compute_flag_decoder_loss(
+        self,
+        compressed_features: torch.Tensor,
+        reconstructed_features: torch.Tensor,
+        negative_input_features: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
         """
         compressed_features is (batch, length, channels)
         reconstructed_features is (batch, length, channels)
         """
-        sample_indices = torch.randperm(compressed_features.shape[0])[:self.config.n_sample_eigsolve]
         pooled_compressed = self.decoder.pooling(compressed_features)
-        pooled_compressed = pooled_compressed.flatten(0, 1)[sample_indices]
-        reconstructed_features = reconstructed_features.flatten(0, 1)[sample_indices]
-        # sample points from the compressed feature space
+        pooled_compressed = pooled_compressed.flatten(0, 1)
+        reconstructed_features = reconstructed_features.flatten(0, 1)
+
+        has_negative = (
+            negative_input_features is not None and negative_input_features.numel() > 0
+        )
+
+        # sample points from the compressed feature space (only when no negatives available)
         dim_mins = pooled_compressed.min(0).values
         dim_maxs = pooled_compressed.max(0).values
         dim_mins -= 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_mins)
         dim_maxs += 0.25 * (dim_maxs - dim_mins) * torch.rand_like(dim_maxs)
         
-        num_samples = self.config.n_negative_sample
+        num_samples = 0 if has_negative else self.config.n_negative_sample
         sample_points = torch.rand(num_samples, pooled_compressed.shape[1], device=pooled_compressed.device)
         sample_points = sample_points * (dim_maxs - dim_mins) + dim_mins
         
@@ -253,8 +283,51 @@ class VibeSpaceModel(pl.LightningModule):
         
         # flag loss on the sample points 
         similarity = all_compressed @ all_compressed.T
-        eigenvectors, _ = compute_ncut_eigenvectors(all_reconstructed, self.config.n_eig)
-        eig_similarity = self._compute_multiscale_similarity(eigenvectors)
+        eigenvectors_pos, _ = compute_ncut_eigenvectors(all_reconstructed, self.config.n_eig)
+
+        if has_negative and self.config.get('do_decoder_negative_flag', False):
+            negative_compressed = self.encoder(negative_input_features)
+            negative_reconstructed = self.decoder(negative_compressed)
+            negative_reconstructed = negative_reconstructed.flatten(0, 1)
+
+            neg_eigenvectors, _ = compute_ncut_eigenvectors(negative_reconstructed, self.config.n_eig)
+
+            max_available = min(eigenvectors_pos.shape[1], neg_eigenvectors.shape[1])
+            if max_available == 0:
+                eig_similarity = self._compute_multiscale_similarity(eigenvectors_pos)
+            else:
+                if self.config.single_scale_flag:
+                    current_n_eig = max_available
+                else:
+                    current_n_eig = min(self.config.get('start_n_eig', 4), max_available)
+                    current_n_eig = max(current_n_eig, 1)
+
+                total_filtered_similarity = similarity.new_zeros(similarity.shape)
+                num_scales = 0
+                beta = self.config.get('decoder_negative_beta', self.config.get('negative_beta', 1.0))
+                step_mult = self.config.get('step_mult', 2)
+
+                while current_n_eig <= max_available:
+                    P = eigenvectors_pos[:, :current_n_eig]
+                    N = neg_eigenvectors[:, :current_n_eig]
+
+                    N_norm = F.normalize(N, dim=0)
+                    projection = torch.matmul(N_norm.T, P)
+                    P_filtered = P - beta * torch.matmul(N_norm, projection)
+
+                    P_filtered_norm = F.normalize(P_filtered, dim=-1)
+                    total_filtered_similarity += P_filtered_norm @ P_filtered_norm.T
+
+                    num_scales += 1
+                    current_n_eig *= step_mult
+
+                if num_scales > 0:
+                    eig_similarity = total_filtered_similarity / num_scales
+                else:
+                    eig_similarity = self._compute_multiscale_similarity(eigenvectors_pos)
+        else:
+            eig_similarity = self._compute_multiscale_similarity(eigenvectors_pos)
+
         loss = F.smooth_l1_loss(eig_similarity, similarity)
         return loss
     
@@ -271,19 +344,72 @@ class VibeSpaceModel(pl.LightningModule):
         loss = F.smooth_l1_loss(gt_similarity, pred_similarity)
         return loss
     
-    def _compute_total_loss(self, input_features, target_features, compressed_features,
-                           reconstructed_features):
+    def _compute_total_loss(
+        self,
+        positive_features: torch.Tensor,
+        negative_features: Optional[torch.Tensor],
+        target_features: torch.Tensor,
+        compressed_features: torch.Tensor,
+        reconstructed_features: torch.Tensor,
+    ) -> torch.Tensor:
         """
-        input_features is (batch, length, channels)
+        positive_features is (batch, length, channels)
         target_features is (batch, length, channels)
         compressed_features is (batch, length, channels)
         reconstructed_features is (batch, length, channels)
         """
-        total_loss = 0.0
+        total_loss = positive_features.new_tensor(0.0)
+        has_negative_features = (
+            negative_features is not None and negative_features.numel() > 0
+        )
+        beta = self.config.get('negative_beta', 1.0)
         
         # Flag encoder loss - guide the structure from encoder to compressed features
-        if self.config.flag_encoder_loss > 0:
-            flag_encoder_loss = self._compute_flag_encoder_loss(input_features, compressed_features)
+        if self.config.flag_encoder_loss > 0 and has_negative_features:
+            gt_eigenvectors_pos = self._compute_ncut_eigenvectors(positive_features)
+            gt_eigenvectors_neg = self._compute_ncut_eigenvectors(negative_features)
+
+            total_filtered_similarity = 0.0
+            num_scales = 0
+            max_available = min(gt_eigenvectors_pos.shape[1], gt_eigenvectors_neg.shape[1])
+
+            if max_available == 0:
+                gt_similarity = self._compute_multiscale_similarity(gt_eigenvectors_pos)
+            else:
+                if self.config.single_scale_flag:
+                    current_n_eig = max_available
+                else:
+                    current_n_eig = min(self.config.get('start_n_eig', 4), max_available)
+                    current_n_eig = max(current_n_eig, 1)
+
+                step_mult = self.config.get('step_mult', 2)
+                while current_n_eig <= max_available and current_n_eig > 0:
+                    P = gt_eigenvectors_pos[:, :current_n_eig]
+                    N = gt_eigenvectors_neg[:, :current_n_eig]
+
+                    N_norm = F.normalize(N, dim=0)
+                    projection = torch.matmul(N_norm.T, P)
+                    P_filtered = P - beta * torch.matmul(N_norm, projection)
+
+                    P_filtered_norm = F.normalize(P_filtered, dim=-1)
+                    total_filtered_similarity += P_filtered_norm @ P_filtered_norm.T
+
+                    num_scales += 1
+                    current_n_eig *= step_mult
+
+                if num_scales > 0:
+                    gt_similarity = total_filtered_similarity / num_scales
+                else:
+                    gt_similarity = self._compute_multiscale_similarity(gt_eigenvectors_pos)
+            flattened_compressed = compressed_features.flatten(0, 1)
+            pred_similarity = flattened_compressed @ flattened_compressed.T
+
+            flag_encoder_loss = F.smooth_l1_loss(gt_similarity, pred_similarity)
+            self.log("loss/flag_encoder", flag_encoder_loss, prog_bar=True)
+            total_loss += flag_encoder_loss * self.config.flag_encoder_loss
+            self.loss_history['flag_encoder'].append(flag_encoder_loss.item())
+        elif self.config.flag_encoder_loss > 0:
+            flag_encoder_loss = self._compute_flag_encoder_loss(positive_features, compressed_features)
             self.log("loss/flag_encoder", flag_encoder_loss, prog_bar=True)
             total_loss += flag_encoder_loss * self.config.flag_encoder_loss
             self.loss_history['flag_encoder'].append(flag_encoder_loss.item())
@@ -291,7 +417,11 @@ class VibeSpaceModel(pl.LightningModule):
         # Flag decoder loss - guide the structure from compressed to decoded features
         if self.config.flag_decoder_loss > 0:
             if self.trainer.global_step >= 500:  # warmup period
-                flag_decoder_loss = self._compute_flag_decoder_loss(compressed_features, reconstructed_features)
+                flag_decoder_loss = self._compute_flag_decoder_loss(
+                    compressed_features,
+                    reconstructed_features,
+                    negative_features,
+                )
                 self.log("loss/flag_decoder", flag_decoder_loss, prog_bar=True)
                 total_loss += flag_decoder_loss * self.config.flag_decoder_loss
                 self.loss_history['flag_decoder'].append(flag_decoder_loss.item())
@@ -303,7 +433,6 @@ class VibeSpaceModel(pl.LightningModule):
             total_loss += recon_loss * self.config.recon_loss
             self.loss_history['recon'].append(recon_loss.item())
 
-
         return total_loss
     
     def configure_optimizers(self):
@@ -314,18 +443,35 @@ class VibeSpaceModel(pl.LightningModule):
 
 class FeatureDataset(torch.utils.data.Dataset):
     
-    def __init__(self, input_features: torch.Tensor, target_features: torch.Tensor):
-        self.input_features = input_features
+    def __init__(
+        self,
+        positive_features: torch.Tensor,
+        target_features: torch.Tensor,
+        negative_features: Optional[torch.Tensor] = None,
+    ):
+        self.positive_features = positive_features
         self.target_features = target_features
+        if negative_features is not None and negative_features.numel() > 0:
+            self.negative_features = negative_features
+        else:
+            self.negative_features = None
     
     def __len__(self) -> int:
-        return len(self.input_features)
+        return len(self.positive_features)
     
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
-        return (
-            self.input_features[idx], 
-            self.target_features[idx]
-        )
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        positive = self.positive_features[idx]
+        target = self.target_features[idx]
+
+        if self.negative_features is None:
+            negative = torch.zeros_like(positive)
+            has_negative = torch.tensor(False, dtype=torch.bool)
+        else:
+            neg_idx = torch.randint(0, self.negative_features.shape[0], (1,)).item()
+            negative = self.negative_features[neg_idx]
+            has_negative = torch.tensor(True, dtype=torch.bool)
+
+        return positive, negative, target, has_negative
 
 
 def clear_gpu_memory():
@@ -337,10 +483,11 @@ def clear_gpu_memory():
 def train_vibe_space(model: VibeSpaceModel, 
                           config: DictConfig,
                           input_features: torch.Tensor,
-                          target_features: torch.Tensor, 
+                          target_features: torch.Tensor,
+                          negative_features: Optional[torch.Tensor] = None,
                           devices: List[int] = [0]) -> pl.Trainer:
     clear_gpu_memory()
-    dataset = FeatureDataset(input_features, target_features)
+    dataset = FeatureDataset(input_features, target_features, negative_features)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=8, shuffle=True, num_workers=0)
     trainer = pl.Trainer(
         max_steps=config.steps,

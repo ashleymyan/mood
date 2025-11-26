@@ -25,7 +25,6 @@ def load_config(config_path: str):
 
 
 def run_vibe_blend_safe(image1, image2, extra_images, negative_images, config_path, interpolation_weights: List[float], n_clusters: int = 25):
-    # TODO: implement negative images
     success = False
     while not success:
         try:
@@ -77,7 +76,7 @@ def run_vibe_blend_not_safe(image1, image2, extra_images, negative_images, confi
 
 
 def run_vibe_space_training(positive_images: List[Image.Image], 
-                            negative_images: List[Image.Image],  # TODO: implement negative images
+                            negative_images: List[Image.Image],
                             config_path: str = DEFAULT_CONFIG_PATH) -> Tuple[VibeSpaceModel, object]:
     """
     Train a Mood Space compression model from input images.
@@ -91,14 +90,27 @@ def run_vibe_space_training(positive_images: List[Image.Image],
     """
     # Load and configure training parameters
     config = load_config(config_path)
+    positive_images = [img for img in positive_images if img is not None]
+    negative_images = [img for img in negative_images or [] if img is not None]
+    if len(positive_images) == 0:
+        raise ValueError("No valid positive images provided for Vibe Space training")
+    has_negative_images = len(negative_images) > 0
     
     # Transform images for feature extraction
     dino_input_images = torch.stack([dino_image_transform(image) for image in positive_images])
     clip_input_images = torch.stack([clip_image_transform(image) for image in positive_images])
+    if has_negative_images:
+        negative_dino_input_images = torch.stack([dino_image_transform(image) for image in negative_images])
+    else:
+        negative_dino_input_images = None
     
     # Extract features using pre-trained models
     dino_image_embeds = extract_dino_features(dino_input_images)
     clip_image_embeds = extract_clip_features(clip_input_images)
+    if has_negative_images:
+        negative_dino_embeds = extract_dino_features(negative_dino_input_images)
+    else:
+        negative_dino_embeds = None
     
     # Determine intrinsic dimensionality
     flattened_features = dino_image_embeds.flatten(end_dim=-2)
@@ -113,7 +125,11 @@ def run_vibe_space_training(positive_images: List[Image.Image],
     # Create and train model
     model = VibeSpaceModel(config, enable_gradio_progress=True)
     trainer = train_vibe_space(
-        model, config, dino_image_embeds, clip_image_embeds
+        model,
+        config,
+        dino_image_embeds,
+        clip_image_embeds,
+        negative_dino_embeds,
     )
     
     return model, trainer
