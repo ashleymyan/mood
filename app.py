@@ -81,33 +81,31 @@ def create_gradio_interface():
         
         Given a pair of images, vibe blending will generate a set of images that creatively connect the input images.
         
-        **How to use:**
-        1. Upload 2 images that share some thematic relationship
-        2. Set the start and end α values to control the interpolation weight
-        3. (optional) Upload extra images that help to find the commonalities between the input images
-        4. (optional) Upload negative images that help to avoid unwanted attributes
-        5. Enjoy the creativity!
         """)
         with gr.Row():
             with gr.Column():
                 with gr.Group():
                     with gr.Row():
+                        gr.Markdown("**Step 1:** Upload 2 images")
+                    with gr.Row():
                         input1 = gr.Image(label="Input 1", show_label=True)
                         input2 = gr.Image(label="Input 2", show_label=True)
 
-                with gr.Group():
-                    with gr.Row():
-                        alpha_start = gr.Slider(minimum=0, maximum=2, step=0.1, value=0.0, label="Start α", info="interpolation weight")
-                        alpha_end = gr.Slider(minimum=0, maximum=2, step=0.1, value=1.0, label="End α", info="use α>1 for extrapolation")
-                    # n_steps = gr.Slider(minimum=1, maximum=40, step=1, value=10, label="Number of Output Images")
-                    n_steps = gr.Number(value=12, label="Number of Output Images", interactive=True)
-                    with gr.Row():
-                        extra_images = gr.Gallery(label="Extra Images (optional)", show_label=True, columns=3, rows=2, height=150)
-                        negative_images = gr.Gallery(label="Negative Images (optional)", show_label=True, columns=3, rows=2, height=150)
+                with gr.Accordion("Options", open=False):
+                    with gr.Group():
+                        with gr.Row():
+                            alpha_start = gr.Slider(minimum=0, maximum=2, step=0.1, value=0.0, label="Start α", info="interpolation weight")
+                            alpha_end = gr.Slider(minimum=0, maximum=2, step=0.1, value=1.0, label="End α", info="use α>1 for extrapolation")
+                        # n_steps = gr.Slider(minimum=1, maximum=40, step=1, value=10, label="Number of Output Images")
+                        n_steps = gr.Number(value=12, label="Number of Output Images", interactive=True)
+                        with gr.Row():
+                            extra_images = gr.Gallery(label="Extra Images (optional)", show_label=True, columns=3, rows=2, height=150)
+                            negative_images = gr.Gallery(label="Negative Images (optional)", show_label=True, columns=3, rows=2, height=150)
             with gr.Column():
                 with gr.Group():
                     # blending_results = gr.Gallery(label="Vibe Blending Results", columns=5, rows=4, height=600)
-                    blending_results = gr.Image(label="Vibe Blending Results", show_label=True, height=600)
+                    gr.Markdown("**Step 2:** Run Vibe Blending")
+                    blending_results = gr.Image(label="Vibe Blending Results", show_label=True, height=400)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
         
         # Training wrapper function
