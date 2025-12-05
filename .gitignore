@@ -21,3 +21,5 @@ images/cup_torus_no_bg/
 models/
 .gradio/
 moodspace_clean/
+test_cleanup_dataset.py
+test_upload_feedback.py

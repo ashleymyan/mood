@@ -1,16 +1,38 @@
 import logging
 import os
-from typing import List, Union
+import tempfile
+import uuid
+from typing import List, Union, Optional
+from datetime import datetime
+from pathlib import Path
 
 import gradio as gr
 from PIL import Image
 import numpy as np
+import pandas as pd
 
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
+from feedback_viewer import create_feedback_viewer_tab, store_feedback_to_hf_dataset
+
+# Hugging Face Datasets for feedback storage
+try:
+    from datasets import Dataset, load_dataset  # type: ignore
+    from huggingface_hub import login  # type: ignore
+    HF_DATASETS_AVAILABLE = True
+except ImportError:
+    Dataset = None  # type: ignore
+    load_dataset = None  # type: ignore
+    login = None  # type: ignore
+    HF_DATASETS_AVAILABLE = False
+    logging.warning("Hugging Face datasets not available. Feedback will not be stored.")
 
 USE_HUGGINGFACE_ZEROGPU = os.getenv("USE_HUGGINGFACE_ZEROGPU", "false").lower() == "false" #"true"
 DEFAULT_CONFIG_PATH = "./config.yaml"
+# Hugging Face Dataset repository for storing feedback
+# Set this to your Hugging Face username/dataset-name, e.g., "your-username/vibe-blending-feedback"
+HF_FEEDBACK_DATASET_REPO = os.getenv("HF_FEEDBACK_DATASET_REPO", None)
+HF_TOKEN = os.getenv("HF_TOKEN", None)
 
 if USE_HUGGINGFACE_ZEROGPU:
     try:
@@ -61,17 +83,11 @@ def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List
     return processed_images
 
 
-def create_gradio_interface():
-    theme = gr.themes.Base(
-        spacing_size='md', 
-        text_size='lg', 
-        primary_hue='blue', 
-        neutral_hue='slate', 
-        secondary_hue='pink'
-    )
-    
-    demo = gr.Blocks(theme=theme)
-    with demo:
+
+
+def create_vibe_blending_tab():
+    """Create the vibe blending tab interface."""
+    with gr.Tab("Vibe Blending"):
         gr.Markdown("""
         ## Vibe Blending Demo
         
@@ -80,8 +96,6 @@ def create_gradio_interface():
         [Paper]() | [Code]() | [Website]()
         
         Given a pair of images, vibe blending will generate a set of images that creatively connect the input images.
-        
-        **[📝 Feedback Form](https://docs.google.com/forms/d/e/1FAIpQLSfS-2fdJ3eaG6JBUGNgHYD4zNRtoPUOc2OhF8J-uT-gyR3LyA/viewform?usp=dialog)** - Please submit your interesting images!
         
         """)
         with gr.Row():
@@ -103,6 +117,12 @@ def create_gradio_interface():
                         with gr.Row():
                             extra_images = gr.Gallery(label="Extra Images (optional)", show_label=True, columns=3, rows=2, height=150)
                             negative_images = gr.Gallery(label="Negative Images (optional)", show_label=True, columns=3, rows=2, height=150)
+                with gr.Group():
+                    gr.Markdown("**Step 3:** Submit your feedback")
+                    rating = gr.Radio(label="How do you like the results?", choices=["1", "2", "3", "4", "5"])
+                    feedback_form = gr.TextArea(label="Feedback", show_label=False, lines=1)
+                    feedback_button = gr.Button("Submit Feedback", variant="secondary", size="sm")
+                
             with gr.Column():
                 with gr.Group():
                     # blending_results = gr.Gallery(label="Vibe Blending Results", columns=5, rows=4, height=600)
@@ -110,8 +130,7 @@ def create_gradio_interface():
                     blending_results = gr.Image(label="Vibe Blending Results", show_label=True, height=400)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
         
-        # Training wrapper function
-        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps):
+        def _process_input_images(input1, input2, extra_images, negative_images):
             input1 = load_gradio_images_helper(input1)
             input2 = load_gradio_images_helper(input2)
             extra_images = load_gradio_images_helper(extra_images)
@@ -127,12 +146,77 @@ def create_gradio_interface():
             elif isinstance(negative_images, Image.Image):
                 negative_images = [negative_images]
 
+            return input1, input2, extra_images, negative_images
+        
+        # Training wrapper function
+        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps):
+            input1, input2, extra_images, negative_images = _process_input_images(input1, input2, extra_images, negative_images)
+
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
             blended_images = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
             blended_images = create_image_grid(blended_images, rows=np.ceil(len(blended_images)/4).astype(int), cols=4)
             return blended_images
         
         blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results])
+        
+        def feedback_button_click(rating, feedback_form, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
+            """Handle feedback submission and store to Hugging Face Dataset."""
+            if not rating:
+                gr.Warning("Please select a rating before submitting feedback.")
+                return gr.update(value=None), gr.update(value="")
+            
+            # Validate that required images exist
+            if input1 is None:
+                gr.Warning("Please upload Input 1 image before submitting feedback.")
+                return gr.update(value=rating), gr.update(value=feedback_form)
+            
+            if input2 is None:
+                gr.Warning("Please upload Input 2 image before submitting feedback.")
+                return gr.update(value=rating), gr.update(value=feedback_form)
+            
+            if blending_results is None:
+                gr.Warning("Please run vibe blending first to generate results before submitting feedback.")
+                return gr.update(value=rating), gr.update(value=feedback_form)
+            
+            # Process images to check if they exist
+            input1_img, input2_img, extra_images_processed, negative_images_processed = _process_input_images(
+                input1, input2, extra_images, negative_images
+            )
+            
+            # Process blending results
+            blended_images = load_gradio_images_helper(blending_results)
+            
+            # Store feedback and images to Hugging Face Dataset
+            success = store_feedback_to_hf_dataset(
+                rating=rating,
+                feedback_text=feedback_form or "",
+                alpha_start=alpha_start,
+                alpha_end=alpha_end,
+                n_steps=n_steps,
+                input1_image=input1_img,
+                input2_image=input2_img,
+                extra_images=extra_images_processed if extra_images_processed else None,
+                negative_images=negative_images_processed if negative_images_processed else None,
+                blending_result_image=blended_images,
+            )
+            
+            if success:
+                gr.Info("Thank you! Your feedback has been submitted successfully.")
+                return gr.update(value=None), gr.update(value="")  # Reset rating and feedback form
+            else:
+                error_msg = "Feedback could not be stored. "
+                if not HF_FEEDBACK_DATASET_REPO:
+                    error_msg += "Please configure `HF_FEEDBACK_DATASET_REPO` environment variable (e.g., 'your-username/vibe-blending-feedback')."
+                else:
+                    error_msg += "Please check the logs for details."
+                gr.Warning(error_msg)
+                return gr.update(value=rating), gr.update(value=feedback_form)  # Keep rating and feedback form
+        
+        feedback_button.click(
+            feedback_button_click,
+            inputs=[rating, feedback_form, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results],
+            outputs=[rating, feedback_form]  # Reset rating and feedback form
+        )
         
         example_cases = [
             [Image.open("./images/playviolin_hr.png"), Image.open("./images/playguitar_hr.png")],
@@ -156,14 +240,47 @@ def create_gradio_interface():
             [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear2.jpg"), [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear1.jpg")]],
         ]
         gr.Examples(examples=negative_image_examples, label="Negative Image Examples", inputs=[input1, input2, negative_images], outputs=[blending_results])
+
+
+# Feedback viewer functions moved to feedback_viewer.py
+
+
+def create_merged_interface():
+    """Create merged interface with both tabs."""
+    theme = gr.themes.Base(
+        spacing_size='md', 
+        text_size='lg', 
+        primary_hue='blue', 
+        neutral_hue='slate', 
+        secondary_hue='pink'
+    )
+    
+    demo = gr.Blocks(theme=theme)
+    with demo:
+        gr.Markdown("""
+        ## Vibe Blending Demo
         
+        This is the demo for the paper "*Vibe Spaces for Creatively Connecting and Expressing Visual Concepts*".
+        
+        [Paper]() | [Code]() | [Website]()
+        
+        Given a pair of images, vibe blending will generate a set of images that creatively connect the input images.
+        
+        **[📝 Feedback Form](https://docs.google.com/forms/d/e/1FAIpQLSfS-2fdJ3eaG6JBUGNgHYD4zNRtoPUOc2OhF8J-uT-gyR3LyA/viewform?usp=dialog)** - Please submit your interesting images!
+        
+        """)
+        
+        # Create both tabs
+        create_vibe_blending_tab()
+        create_feedback_viewer_tab()
+    
     return demo
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     
-    demo = create_gradio_interface()
+    demo = create_merged_interface()
     demo.launch(
         share=True,
         server_name="0.0.0.0" if USE_HUGGINGFACE_ZEROGPU else None,

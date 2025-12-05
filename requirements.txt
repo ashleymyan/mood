@@ -12,3 +12,6 @@ diffusers==0.33.1
 transformers==4.47.0
 triton==3.0.0
 ncut_pytorch==2.3.0
+datasets
+huggingface_hub
+gradio
