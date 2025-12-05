@@ -14,4 +14,3 @@ triton==3.0.0
 ncut_pytorch==2.3.0
 datasets
 huggingface_hub
-gradio

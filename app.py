@@ -266,8 +266,6 @@ def create_merged_interface():
         
         Given a pair of images, vibe blending will generate a set of images that creatively connect the input images.
         
-        **[📝 Feedback Form](https://docs.google.com/forms/d/e/1FAIpQLSfS-2fdJ3eaG6JBUGNgHYD4zNRtoPUOc2OhF8J-uT-gyR3LyA/viewform?usp=dialog)** - Please submit your interesting images!
-        
         """)
         
         # Create both tabs

@@ -791,6 +791,141 @@ def create_feedback_viewer_tab():
         
         selected_details = gr.JSON(label="Full Feedback Details", visible=False)
         
+        # Admin delete section - hidden behind accordion
+        with gr.Accordion("⋮", open=False):
+            with gr.Row():
+                delete_uuid_input = gr.Textbox(
+                    label="UUID to Delete",
+                    placeholder="Enter UUID or prefix (e.g. e7132a33)",
+                    value="",
+                    scale=2
+                )
+                delete_password_input = gr.Textbox(
+                    label="Admin Password",
+                    placeholder="Enter admin password",
+                    type="password",
+                    value="",
+                    scale=1
+                )
+                delete_button = gr.Button("🗑️ Delete", variant="stop", scale=1)
+            delete_status = gr.Markdown("")
+        
+        def delete_entry_by_uuid(uuid_to_delete: str, password: str):
+            """Delete a feedback entry by UUID after password verification."""
+            # Check password
+            if password != "admin":
+                return "❌ Invalid admin password."
+            
+            if not uuid_to_delete or not uuid_to_delete.strip():
+                return "❌ Please enter a UUID to delete."
+            
+            uuid_to_delete = uuid_to_delete.strip()
+            
+            try:
+                if not HF_DATASETS_AVAILABLE or load_dataset is None or login is None:
+                    return "❌ Hugging Face datasets library not available."
+                
+                if HF_TOKEN:
+                    login(token=HF_TOKEN, add_to_git_credential=True)
+                
+                if not HF_FEEDBACK_DATASET_REPO:
+                    return "❌ HF_FEEDBACK_DATASET_REPO not configured."
+                
+                # Load dataset
+                dataset = load_dataset(HF_FEEDBACK_DATASET_REPO, split="train")
+                original_count = len(dataset)
+                
+                if original_count == 0:
+                    return "❌ Dataset is empty. Nothing to delete."
+                
+                # First, find matching entries (exact or prefix match)
+                search_term = uuid_to_delete.lower()
+                matching_entries = []
+                
+                for entry in dataset:
+                    entry_uuid = entry.get("uuid", "")
+                    if entry_uuid.lower() == search_term or entry_uuid.lower().startswith(search_term):
+                        matching_entries.append(entry_uuid)
+                
+                if len(matching_entries) == 0:
+                    return f"❌ No UUID matching '{uuid_to_delete}' found in dataset."
+                elif len(matching_entries) > 1:
+                    matches_display = ", ".join([u[:12] + "..." for u in matching_entries[:5]])
+                    if len(matching_entries) > 5:
+                        matches_display += f" (+{len(matching_entries) - 5} more)"
+                    return f"❌ Multiple UUIDs match '{uuid_to_delete}': {matches_display}. Please be more specific."
+                
+                # Exactly one match - use the full UUID
+                uuid_to_delete_full = matching_entries[0]
+                
+                # Filter entries to keep (exclude the matched UUID)
+                entries_to_keep = []
+                
+                for entry in dataset:
+                    entry_uuid = entry.get("uuid", "")
+                    if entry_uuid == uuid_to_delete_full:
+                        continue
+                    else:
+                        entries_to_keep.append(dict(entry))
+                
+                # Handle empty dataset case
+                if len(entries_to_keep) == 0:
+                    # Create placeholder entry to avoid empty dataset issues
+                    import uuid as uuid_module
+                    placeholder = {}
+                    deleted_entry = next(entry for entry in dataset if entry.get("uuid", "") == uuid_to_delete_full)
+                    for key in dataset.features.keys():
+                        if key == "timestamp":
+                            placeholder[key] = datetime.now().isoformat()
+                        elif key == "rating":
+                            placeholder[key] = 0
+                        elif key == "feedback":
+                            placeholder[key] = "[PLACEHOLDER - This entry can be deleted]"
+                        elif key in ["alpha_start", "alpha_end"]:
+                            placeholder[key] = 0.0
+                        elif key == "n_steps":
+                            placeholder[key] = 0
+                        elif key in ["input1", "input2", "blending_result"]:
+                            placeholder[key] = deleted_entry.get(key)
+                        elif key in ["extra_images", "negative_images"]:
+                            placeholder[key] = []
+                        elif key == "uuid":
+                            placeholder[key] = str(uuid_module.uuid4())
+                        else:
+                            placeholder[key] = deleted_entry.get(key, "")
+                    
+                    new_dataset = Dataset.from_list([placeholder], features=dataset.features)
+                    new_dataset.push_to_hub(
+                        HF_FEEDBACK_DATASET_REPO,
+                        private=True,
+                        token=HF_TOKEN
+                    )
+                    return f"✅ Deleted entry with UUID '{uuid_to_delete_full}'. Dataset now has 1 placeholder entry."
+                
+                # Create new dataset with remaining entries
+                new_dataset = Dataset.from_list(entries_to_keep, features=dataset.features)
+                
+                # Push to hub
+                new_dataset.push_to_hub(
+                    HF_FEEDBACK_DATASET_REPO,
+                    private=True,
+                    token=HF_TOKEN
+                )
+                
+                return f"✅ Successfully deleted entry with UUID '{uuid_to_delete_full}'. {len(entries_to_keep)} entries remaining."
+                
+            except Exception as e:
+                logging.error(f"Error deleting entry: {e}")
+                import traceback
+                traceback.print_exc()
+                return f"❌ Error deleting entry: {str(e)}"
+        
+        delete_button.click(
+            delete_entry_by_uuid,
+            inputs=[delete_uuid_input, delete_password_input],
+            outputs=[delete_status]
+        )
+        
         def parse_timestamp(timestamp_str):
             """Parse timestamp string to datetime object."""
             if not timestamp_str or not timestamp_str.strip():
@@ -1077,7 +1212,7 @@ def create_feedback_viewer_tab():
                 options_html = f'''
                 <div class="options-cell">
                     <strong>Timestamp:</strong> {timestamp}<br/>
-                    <strong>UUID:</strong> <code style="font-size: 0.8em; background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px;">{uuid_display}</code><br/>
+                    <strong>UUID:</strong> <code onclick="navigator.clipboard.writeText('{uuid_value}').then(() => this.style.backgroundColor='#90EE90').catch(() => alert('Copy failed')); setTimeout(() => this.style.backgroundColor='#f0f0f0', 500);" style="font-size: 0.8em; background-color: #f0f0f0; padding: 2px 4px; border-radius: 3px; cursor: pointer;" title="Click to copy: {uuid_value}">{uuid_display}</code><br/>
                     <strong>Rating:</strong> {rating}/5<br/>
                     <strong>Alpha:</strong> {alpha_start} → {alpha_end}<br/>
                     <strong>Steps:</strong> {n_steps}<br/>
