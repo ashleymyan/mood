@@ -104,8 +104,8 @@ def create_vibe_blending_tab():
                     with gr.Row():
                         gr.Markdown("**Step 1:** Upload 2 images")
                     with gr.Row():
-                        input1 = gr.Image(label="Input 1", show_label=True)
-                        input2 = gr.Image(label="Input 2", show_label=True)
+                        input1 = gr.Image(label="Input 1", show_label=True, format="png")
+                        input2 = gr.Image(label="Input 2", show_label=True, format="png")
 
                 with gr.Accordion("Options", open=False):
                     with gr.Group():
@@ -125,9 +125,10 @@ def create_vibe_blending_tab():
                 
             with gr.Column():
                 with gr.Group():
-                    # blending_results = gr.Gallery(label="Vibe Blending Results", columns=5, rows=4, height=600)
                     gr.Markdown("**Step 2:** Run Vibe Blending")
-                    blending_results = gr.Image(label="Vibe Blending Results", show_label=True, height=400)
+                    with gr.Accordion("Vibe Blending Results", open=False):
+                        blending_results_grid = gr.Image(label="Grid View", show_label=True, format="png")
+                    blending_results = gr.Gallery(label="Gallery View", show_label=False, columns=4, rows=3, interactive=False)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
         
         def _process_input_images(input1, input2, extra_images, negative_images):
@@ -153,11 +154,11 @@ def create_vibe_blending_tab():
             input1, input2, extra_images, negative_images = _process_input_images(input1, input2, extra_images, negative_images)
 
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
-            blended_images = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
-            blended_images = create_image_grid(blended_images, rows=np.ceil(len(blended_images)/4).astype(int), cols=4)
-            return blended_images
+            blended_images_list = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
+            blended_images_grid = create_image_grid(blended_images_list, rows=np.ceil(len(blended_images_list)/4).astype(int), cols=4)
+            return blended_images_grid, blended_images_list  # Return grid and list for display
         
-        blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results])
+        blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results_grid, blending_results])
         
         def feedback_button_click(rating, feedback_form, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
             """Handle feedback submission and store to Hugging Face Dataset."""
@@ -174,7 +175,7 @@ def create_vibe_blending_tab():
                 gr.Warning("Please upload Input 2 image before submitting feedback.")
                 return gr.update(value=rating), gr.update(value=feedback_form)
             
-            if blending_results is None:
+            if blending_results is None or len(blending_results) == 0:
                 gr.Warning("Please run vibe blending first to generate results before submitting feedback.")
                 return gr.update(value=rating), gr.update(value=feedback_form)
             
@@ -183,10 +184,16 @@ def create_vibe_blending_tab():
                 input1, input2, extra_images, negative_images
             )
             
-            # Process blending results
-            blended_images = load_gradio_images_helper(blending_results)
+            # Extract images from gallery (gallery returns list of tuples (image_path, caption) or just image paths)
+            blending_result_images = []
+            for item in blending_results:
+                if isinstance(item, tuple):
+                    image_path = item[0]
+                else:
+                    image_path = item
+                blending_result_images.append(Image.open(image_path).convert("RGB"))
             
-            # Store feedback and images to Hugging Face Dataset
+            # Store feedback and images to Hugging Face Dataset (upload list of images)
             success = store_feedback_to_hf_dataset(
                 rating=rating,
                 feedback_text=feedback_form or "",
@@ -197,7 +204,7 @@ def create_vibe_blending_tab():
                 input2_image=input2_img,
                 extra_images=extra_images_processed if extra_images_processed else None,
                 negative_images=negative_images_processed if negative_images_processed else None,
-                blending_result_image=blended_images,
+                blending_result_images=blending_result_images,  # Upload list of images
             )
             
             if success:
@@ -229,17 +236,17 @@ def create_vibe_blending_tab():
             [Image.open("./images/00436_l.jpg"), Image.open("./images/00436_r.jpg")],
             [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg")],
         ]
-        gr.Examples(examples=example_cases, label="Example Cases", inputs=[input1, input2], outputs=[blending_results])
+        gr.Examples(examples=example_cases, label="Example Cases", inputs=[input1, input2], outputs=[blending_results_grid, blending_results])
         
         extra_image_examples = [
             [Image.open("./images/archi/input_A.jpg"), Image.open("./images/archi/input_B.jpg"), [Image.open("./images/archi/extra1.jpg"), Image.open("./images/archi/extra2.jpg"), Image.open("./images/archi/extra3.jpg")]],
         ]
-        gr.Examples(examples=extra_image_examples, label="Extra Image Examples", inputs=[input1, input2, extra_images], outputs=[blending_results])
+        gr.Examples(examples=extra_image_examples, label="Extra Image Examples", inputs=[input1, input2, extra_images], outputs=[blending_results_grid, blending_results])
         
         negative_image_examples = [
             [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear2.jpg"), [Image.open("./images/pink_bear1.jpg"), Image.open("./images/black_bear1.jpg")]],
         ]
-        gr.Examples(examples=negative_image_examples, label="Negative Image Examples", inputs=[input1, input2, negative_images], outputs=[blending_results])
+        gr.Examples(examples=negative_image_examples, label="Negative Image Examples", inputs=[input1, input2, negative_images], outputs=[blending_results_grid, blending_results])
 
 
 # Feedback viewer functions moved to feedback_viewer.py
@@ -257,17 +264,6 @@ def create_merged_interface():
     
     demo = gr.Blocks(theme=theme)
     with demo:
-        gr.Markdown("""
-        ## Vibe Blending Demo
-        
-        This is the demo for the paper "*Vibe Spaces for Creatively Connecting and Expressing Visual Concepts*".
-        
-        [Paper]() | [Code]() | [Website]()
-        
-        Given a pair of images, vibe blending will generate a set of images that creatively connect the input images.
-        
-        """)
-        
         # Create both tabs
         create_vibe_blending_tab()
         create_feedback_viewer_tab()

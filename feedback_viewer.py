@@ -6,6 +6,7 @@ from Hugging Face Datasets.
 """
 
 import logging
+import math
 import os
 from typing import List, Optional
 from io import BytesIO
@@ -17,6 +18,8 @@ from datasets import Dataset
 
 import gradio as gr
 from PIL import Image
+
+from ipadapter_model import create_image_grid
 
 # Hugging Face Datasets imports
 try:
@@ -43,7 +46,7 @@ def store_feedback_to_hf_dataset(
     input2_image: Optional[Image.Image],
     extra_images: Optional[List[Image.Image]],
     negative_images: Optional[List[Image.Image]],
-    blending_result_image: Optional[Image.Image],
+    blending_result_images: Optional[List[Image.Image]],
     dataset_repo: Optional[str] = None,
     token: Optional[str] = None
 ) -> bool:
@@ -63,7 +66,7 @@ def store_feedback_to_hf_dataset(
         input2_image: Second input image (PIL Image)
         extra_images: List of extra images (PIL Images)
         negative_images: List of negative images (PIL Images)
-        blending_result_image: Resulting blended image (PIL Image)
+        blending_result_images: List of blending result images (PIL Images)
         dataset_repo: Hugging Face dataset repository (username/dataset-name)
         token: Hugging Face token (if None, will try to use HF_TOKEN env var)
     
@@ -128,7 +131,7 @@ def store_feedback_to_hf_dataset(
             "input2": ImageFeature(),
             "extra_images": Sequence(ImageFeature()),
             "negative_images": Sequence(ImageFeature()),
-            "blending_result": ImageFeature(),
+            "blending_results": Sequence(ImageFeature()),  # List of blending result images
         })
         
         # Ensure images are RGB PIL Images
@@ -157,7 +160,7 @@ def store_feedback_to_hf_dataset(
             "input2": prepare_image(input2_image),
             "extra_images": [prepare_image(img) for img in (extra_images or []) if prepare_image(img) is not None],
             "negative_images": [prepare_image(img) for img in (negative_images or []) if prepare_image(img) is not None],
-            "blending_result": prepare_image(blending_result_image),
+            "blending_results": [prepare_image(img) for img in (blending_result_images or []) if prepare_image(img) is not None],
         }
         
         # Create a new dataset with just the new entry
@@ -571,7 +574,10 @@ def load_feedback_from_hf_dataset(
                     dataset = dataset.cast_column("input1", ImageFeature())
                 if "input2" in dataset.column_names:
                     dataset = dataset.cast_column("input2", ImageFeature())
-                if "blending_result" in dataset.column_names:
+                if "blending_results" in dataset.column_names:
+                    dataset = dataset.cast_column("blending_results", Sequence(ImageFeature()))
+                elif "blending_result" in dataset.column_names:
+                    # Backward compatibility for old single-image format
                     dataset = dataset.cast_column("blending_result", ImageFeature())
                 if "extra_images" in dataset.column_names:
                     dataset = dataset.cast_column("extra_images", Sequence(ImageFeature()))
@@ -594,13 +600,16 @@ def load_feedback_from_hf_dataset(
                     # Force access to image fields - this triggers decoding from hub storage
                     input1_raw = entry["input1"] if "input1" in entry else None
                     input2_raw = entry["input2"] if "input2" in entry else None
-                    blending_result_raw = entry["blending_result"] if "blending_result" in entry else None
+                    # Support both new format (blending_results - list) and old format (blending_result - single)
+                    blending_results_raw = entry.get("blending_results", [])
+                    blending_result_raw = entry.get("blending_result", None)  # Backward compatibility
                     extra_images_raw = entry.get("extra_images", [])
                     negative_images_raw = entry.get("negative_images", [])
                 except Exception as e:
                     logging.debug(f"Error accessing image fields in entry {idx}: {e}")
                     input1_raw = None
                     input2_raw = None
+                    blending_results_raw = []
                     blending_result_raw = None
                     extra_images_raw = []
                     negative_images_raw = []
@@ -618,7 +627,21 @@ def load_feedback_from_hf_dataset(
                     # Handle single image fields using the raw accessed values
                     entry_dict["input1"] = convert_dataset_image_to_pil(input1_raw)
                     entry_dict["input2"] = convert_dataset_image_to_pil(input2_raw)
-                    entry_dict["blending_result"] = convert_dataset_image_to_pil(blending_result_raw)
+                    
+                    # Handle blending results - support both new list format and old single image format
+                    if blending_results_raw:
+                        converted_results = []
+                        for img_item in blending_results_raw:
+                            converted = convert_dataset_image_to_pil(img_item)
+                            if converted is not None:
+                                converted_results.append(converted)
+                        entry_dict["blending_results"] = converted_results
+                    elif blending_result_raw:
+                        # Backward compatibility: convert single image to list
+                        single_img = convert_dataset_image_to_pil(blending_result_raw)
+                        entry_dict["blending_results"] = [single_img] if single_img else []
+                    else:
+                        entry_dict["blending_results"] = []
                     
                     # Handle list image fields
                     if extra_images_raw:
@@ -645,7 +668,7 @@ def load_feedback_from_hf_dataset(
                     # Set to None if conversion fails
                     entry_dict["input1"] = None
                     entry_dict["input2"] = None
-                    entry_dict["blending_result"] = None
+                    entry_dict["blending_results"] = []
                     entry_dict["extra_images"] = []
                     entry_dict["negative_images"] = []
                 
@@ -698,7 +721,7 @@ def load_feedback_from_hf_dataset(
 
 def create_feedback_viewer_tab():
     """Create the feedback viewer tab interface."""
-    with gr.Tab("View Feedback"):
+    with gr.Tab("Feedback Viewer"):
         gr.Markdown("""
         ## Feedback Viewer
         
@@ -885,9 +908,9 @@ def create_feedback_viewer_tab():
                             placeholder[key] = 0.0
                         elif key == "n_steps":
                             placeholder[key] = 0
-                        elif key in ["input1", "input2", "blending_result"]:
+                        elif key in ["input1", "input2"]:
                             placeholder[key] = deleted_entry.get(key)
-                        elif key in ["extra_images", "negative_images"]:
+                        elif key in ["extra_images", "negative_images", "blending_results", "blending_result"]:
                             placeholder[key] = []
                         elif key == "uuid":
                             placeholder[key] = str(uuid_module.uuid4())
@@ -1168,7 +1191,21 @@ def create_feedback_viewer_tab():
                 # Convert images from dataset format to PIL Images
                 input1_img = convert_dataset_image_to_pil(feedback.get("input1"))
                 input2_img = convert_dataset_image_to_pil(feedback.get("input2"))
-                blending_result_img = convert_dataset_image_to_pil(feedback.get("blending_result"))
+                
+                # Get blending results list (new format) or single result (old format)
+                blending_results_raw = feedback.get("blending_results", [])
+                blending_results_list = []
+                if blending_results_raw:
+                    for img in blending_results_raw:
+                        converted = convert_dataset_image_to_pil(img)
+                        if converted:
+                            blending_results_list.append(converted)
+                
+                if not blending_results_list:
+                    # Backward compatibility: check for old single image format
+                    old_result = convert_dataset_image_to_pil(feedback.get("blending_result"))
+                    if old_result:
+                        blending_results_list = [old_result]
                 
                 # Convert list of images
                 extra_imgs = []
@@ -1188,22 +1225,27 @@ def create_feedback_viewer_tab():
                 # Column 1: Input Images
                 input_images_html = '<div class="input-images">'
                 if input1_img:
-                    input1_base64 = pil_image_to_base64(input1_img)
+                    input1_base64 = pil_image_to_base64(input1_img, max_size=512)
                     input_images_html += f'<img src="{input1_base64}" alt="Input 1" title="Input 1" />'
                 else:
                     input_images_html += '<div class="no-image">No Input 1</div>'
                 
                 if input2_img:
-                    input2_base64 = pil_image_to_base64(input2_img)
+                    input2_base64 = pil_image_to_base64(input2_img, max_size=512)
                     input_images_html += f'<img src="{input2_base64}" alt="Input 2" title="Input 2" />'
                 else:
                     input_images_html += '<div class="no-image">No Input 2</div>'
                 input_images_html += '</div>'
                 
-                # Column 2: Result Image
-                if blending_result_img:
-                    result_base64 = pil_image_to_base64(blending_result_img, max_size=400)
-                    result_html = f'<div class="result-image"><img src="{result_base64}" alt="Result" title="Blending Result" /></div>'
+                # Column 2: Result Image - create grid from list of images
+                if blending_results_list and len(blending_results_list) > 0:
+                    # Create grid from list of blending result images
+                    n_images = len(blending_results_list)
+                    cols = min(4, n_images)
+                    rows = math.ceil(n_images / cols)
+                    blending_result_grid = create_image_grid(blending_results_list, rows=rows, cols=cols)
+                    result_base64 = pil_image_to_base64(blending_result_grid, max_size=99999)
+                    result_html = f'<div class="result-image"><img src="{result_base64}" alt="Result" title="Blending Result ({n_images} images)" /></div>'
                 else:
                     result_html = '<div class="no-image">No Result</div>'
                 
@@ -1224,7 +1266,7 @@ def create_feedback_viewer_tab():
                 if extra_imgs:
                     extra_html = '<div class="image-gallery">'
                     for img in extra_imgs:
-                        img_base64 = pil_image_to_base64(img, max_size=150)
+                        img_base64 = pil_image_to_base64(img, max_size=512)
                         extra_html += f'<img src="{img_base64}" alt="Extra Image" />'
                     extra_html += '</div>'
                 else:
@@ -1234,7 +1276,7 @@ def create_feedback_viewer_tab():
                 if negative_imgs:
                     negative_html = '<div class="image-gallery">'
                     for img in negative_imgs:
-                        img_base64 = pil_image_to_base64(img, max_size=150)
+                        img_base64 = pil_image_to_base64(img, max_size=512)
                         negative_html += f'<img src="{img_base64}" alt="Negative Image" />'
                     negative_html += '</div>'
                 else:
