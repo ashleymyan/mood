@@ -120,7 +120,8 @@ def create_vibe_blending_tab():
                 with gr.Group():
                     gr.Markdown("**Step 3:** Submit your feedback")
                     rating = gr.Radio(label="How do you like the results?", choices=["1", "2", "3", "4", "5"])
-                    feedback_form = gr.TextArea(label="Feedback", show_label=False, lines=1)
+                    feedback_form = gr.TextArea(label="Feedback (optional)", show_label=True, lines=1, placeholder="Enter your feedback here...")
+                    make_public = gr.Checkbox(label="Make feedback public", value=True, info="Allow this feedback to be visible in the public feedback viewer")
                     feedback_button = gr.Button("Submit Feedback", variant="secondary", size="sm")
                 
             with gr.Column():
@@ -160,24 +161,24 @@ def create_vibe_blending_tab():
         
         blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results_grid, blending_results])
         
-        def feedback_button_click(rating, feedback_form, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
+        def feedback_button_click(rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
             """Handle feedback submission and store to Hugging Face Dataset."""
             if not rating:
                 gr.Warning("Please select a rating before submitting feedback.")
-                return gr.update(value=None), gr.update(value="")
+                return gr.update(value=None), gr.update(value=""), gr.update(value=True)
             
             # Validate that required images exist
             if input1 is None:
                 gr.Warning("Please upload Input 1 image before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form)
+                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
             
             if input2 is None:
                 gr.Warning("Please upload Input 2 image before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form)
+                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
             
             if blending_results is None or len(blending_results) == 0:
                 gr.Warning("Please run vibe blending first to generate results before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form)
+                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
             
             # Process images to check if they exist
             input1_img, input2_img, extra_images_processed, negative_images_processed = _process_input_images(
@@ -205,11 +206,12 @@ def create_vibe_blending_tab():
                 extra_images=extra_images_processed if extra_images_processed else None,
                 negative_images=negative_images_processed if negative_images_processed else None,
                 blending_result_images=blending_result_images,  # Upload list of images
+                is_public=make_public,  # Pass the public flag
             )
             
             if success:
                 gr.Info("Thank you! Your feedback has been submitted successfully.")
-                return gr.update(value=None), gr.update(value="")  # Reset rating and feedback form
+                return gr.update(value=None), gr.update(value=""), gr.update(value=True)  # Reset rating, feedback form, and checkbox
             else:
                 error_msg = "Feedback could not be stored. "
                 if not HF_FEEDBACK_DATASET_REPO:
@@ -217,12 +219,12 @@ def create_vibe_blending_tab():
                 else:
                     error_msg += "Please check the logs for details."
                 gr.Warning(error_msg)
-                return gr.update(value=rating), gr.update(value=feedback_form)  # Keep rating and feedback form
+                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)  # Keep rating, feedback form, and checkbox
         
         feedback_button.click(
             feedback_button_click,
-            inputs=[rating, feedback_form, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results],
-            outputs=[rating, feedback_form]  # Reset rating and feedback form
+            inputs=[rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results],
+            outputs=[rating, feedback_form, make_public]  # Reset rating, feedback form, and checkbox
         )
         
         example_cases = [

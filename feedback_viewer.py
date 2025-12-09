@@ -47,6 +47,7 @@ def store_feedback_to_hf_dataset(
     extra_images: Optional[List[Image.Image]],
     negative_images: Optional[List[Image.Image]],
     blending_result_images: Optional[List[Image.Image]],
+    is_public: bool = True,
     dataset_repo: Optional[str] = None,
     token: Optional[str] = None
 ) -> bool:
@@ -67,6 +68,7 @@ def store_feedback_to_hf_dataset(
         extra_images: List of extra images (PIL Images)
         negative_images: List of negative images (PIL Images)
         blending_result_images: List of blending result images (PIL Images)
+        is_public: Whether the feedback should be publicly visible (default True)
         dataset_repo: Hugging Face dataset repository (username/dataset-name)
         token: Hugging Face token (if None, will try to use HF_TOKEN env var)
     
@@ -127,6 +129,7 @@ def store_feedback_to_hf_dataset(
             "alpha_start": Value("float64"),
             "alpha_end": Value("float64"),
             "n_steps": Value("int64"),
+            "is_public": Value("bool"),  # Whether feedback is publicly visible
             "input1": ImageFeature(),
             "input2": ImageFeature(),
             "extra_images": Sequence(ImageFeature()),
@@ -156,6 +159,7 @@ def store_feedback_to_hf_dataset(
             "alpha_start": float(alpha_start),
             "alpha_end": float(alpha_end),
             "n_steps": int(n_steps),
+            "is_public": bool(is_public),  # Store public visibility flag
             "input1": prepare_image(input1_image),
             "input2": prepare_image(input2_image),
             "extra_images": [prepare_image(img) for img in (extra_images or []) if prepare_image(img) is not None],
@@ -180,15 +184,34 @@ def store_feedback_to_hf_dataset(
                     return example
                 existing_dataset = existing_dataset.map(add_uuid)
             
-            # Ensure the existing dataset has the UUID field in its schema
-            # Add UUID to schema if missing, then cast to match new schema
+            # Check if existing dataset has is_public field, if not add it (default to True for old entries)
+            if "is_public" not in existing_dataset.column_names:
+                logging.info("Existing dataset missing is_public field, adding is_public=True to existing entries")
+                def add_is_public(example):
+                    if "is_public" not in example:
+                        example["is_public"] = True
+                    return example
+                existing_dataset = existing_dataset.map(add_is_public)
+            
+            # Ensure the existing dataset has the UUID and is_public fields in its schema
+            # Add fields to schema if missing, then cast to match new schema
             try:
                 existing_features = existing_dataset.features
+                from datasets import Features as DatasetFeatures
+                updated_features_dict = dict(existing_features)
+                schema_updated = False
+                
                 if "uuid" not in existing_features:
                     # Create new features dict with UUID added
-                    from datasets import Features as DatasetFeatures
-                    updated_features_dict = dict(existing_features)
                     updated_features_dict["uuid"] = Value("string")
+                    schema_updated = True
+                
+                if "is_public" not in existing_features:
+                    # Add is_public field to schema
+                    updated_features_dict["is_public"] = Value("bool")
+                    schema_updated = True
+                
+                if schema_updated:
                     updated_features = DatasetFeatures(updated_features_dict)
                     existing_dataset = existing_dataset.cast(updated_features)
                 
@@ -515,7 +538,8 @@ def load_feedback_from_hf_dataset(
     dataset_repo: Optional[str] = None,
     token: Optional[str] = None,
     limit: Optional[int] = None,
-    reverse: bool = False
+    reverse: bool = False,
+    public_only: bool = True
 ) -> List[dict]:
     """
     Load feedback entries from a Hugging Face Dataset.
@@ -525,6 +549,8 @@ def load_feedback_from_hf_dataset(
         token: Hugging Face token (if None, will try to use HF_TOKEN env var)
         limit: Maximum number of entries to return (None for all)
         reverse: If True, reverse the order (newest first). Default False (oldest first).
+        public_only: If True, only return public feedback entries. Default True.
+                    Old entries without is_public field are treated as public.
     
     Returns:
         List of feedback entries as dictionaries
@@ -620,6 +646,14 @@ def load_feedback_from_hf_dataset(
                 # Add UUID if missing (backward compatibility for old entries)
                 if "uuid" not in entry_dict or not entry_dict.get("uuid"):
                     entry_dict["uuid"] = str(uuid.uuid4())
+                
+                # Add is_public if missing (backward compatibility - old entries are public by default)
+                if "is_public" not in entry_dict:
+                    entry_dict["is_public"] = True
+                
+                # Filter by public_only if requested
+                if public_only and not entry_dict.get("is_public", True):
+                    continue
                 
                 # Convert Image objects to PIL Images using the raw accessed values
                 # ImageFeature objects need to be converted to PIL Images for display
@@ -814,30 +848,61 @@ def create_feedback_viewer_tab():
         
         selected_details = gr.JSON(label="Full Feedback Details", visible=False)
         
-        # Admin delete section - hidden behind accordion
+        # Admin section - hidden behind accordion
         with gr.Accordion("⋮", open=False):
+            gr.Markdown("### Admin Options")
+            with gr.Row():
+                admin_password_input = gr.Textbox(
+                    label="Admin Password",
+                    placeholder="Enter admin password",
+                    type="password",
+                    value="",
+                    scale=2
+                )
+                include_private_checkbox = gr.Checkbox(
+                    label="Include private feedbacks",
+                    value=False,
+                    interactive=False,
+                    scale=1
+                )
+                verify_password_button = gr.Button("🔓 Verify", variant="secondary", scale=1)
+            admin_status = gr.Markdown("")
+            
+            gr.Markdown("### Delete Entry")
             with gr.Row():
                 delete_uuid_input = gr.Textbox(
                     label="UUID to Delete",
                     placeholder="Enter UUID or prefix (e.g. e7132a33)",
                     value="",
-                    scale=2
-                )
-                delete_password_input = gr.Textbox(
-                    label="Admin Password",
-                    placeholder="Enter admin password",
-                    type="password",
-                    value="",
-                    scale=1
+                    scale=3
                 )
                 delete_button = gr.Button("🗑️ Delete", variant="stop", scale=1)
             delete_status = gr.Markdown("")
         
-        def delete_entry_by_uuid(uuid_to_delete: str, password: str):
+        def verify_admin_password(password: str, current_include_private: bool):
+            """Verify admin password and enable/disable private feedback checkbox."""
+            if password == "admin":
+                return (
+                    gr.update(value=True, interactive=True),  # Enable and check the checkbox
+                    "✅ Admin access granted. You can now view private feedbacks."
+                )
+            else:
+                return (
+                    gr.update(value=False, interactive=False),  # Disable and uncheck the checkbox
+                    "❌ Invalid password. Private feedbacks hidden."
+                )
+        
+        verify_password_button.click(
+            verify_admin_password,
+            inputs=[admin_password_input, include_private_checkbox],
+            outputs=[include_private_checkbox, admin_status]
+        )
+        
+        def delete_entry_by_uuid(uuid_to_delete: str, admin_password: str):
             """Delete a feedback entry by UUID after password verification."""
             # Check password
-            if password != "admin":
-                return "❌ Invalid admin password."
+            if admin_password != "admin":
+                return "❌ Invalid admin password. Enter password and click Verify first."
             
             if not uuid_to_delete or not uuid_to_delete.strip():
                 return "❌ Please enter a UUID to delete."
@@ -945,7 +1010,7 @@ def create_feedback_viewer_tab():
         
         delete_button.click(
             delete_entry_by_uuid,
-            inputs=[delete_uuid_input, delete_password_input],
+            inputs=[delete_uuid_input, admin_password_input],
             outputs=[delete_status]
         )
         
@@ -981,12 +1046,13 @@ def create_feedback_viewer_tab():
             
             return None
         
-        def load_and_display_feedback(items_per_page, page, sort_order, uuid_search="", timestamp_start="", timestamp_end="", rating_filter="All", filter_extra=False, filter_negative=False):
+        def load_and_display_feedback(items_per_page, page, sort_order, uuid_search="", timestamp_start="", timestamp_end="", rating_filter="All", filter_extra=False, filter_negative=False, include_private=False):
             """Load feedback from dataset and format as HTML table with pagination."""
             # Convert radio selection to reverse boolean
             sort_reverse = (sort_order == "New to Old")
             # Load all feedback entries (no limit, we'll paginate ourselves)
-            all_feedbacks = load_feedback_from_hf_dataset(reverse=sort_reverse)
+            # If include_private is True, set public_only to False
+            all_feedbacks = load_feedback_from_hf_dataset(reverse=sort_reverse, public_only=not include_private)
             
             # Filter by UUID if search term provided
             if uuid_search and uuid_search.strip():
@@ -1310,86 +1376,93 @@ def create_feedback_viewer_tab():
             return html_content, page, f"**Total Pages:** {total_pages}"
         
         # Refresh button - loads first page
-        def refresh_feedback(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
-            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+        def refresh_feedback(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
+            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
         refresh_button.click(
             refresh_feedback,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Sort order radio - reset to page 1 when sort order changes
-        def on_sort_order_change(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
+        def on_sort_order_change(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
             # Reset to page 1 when sort order changes
-            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
         sort_order_radio.change(
             on_sort_order_change,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Search button
-        def on_search(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
-            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+        def on_search(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
+            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
         search_button.click(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Rating filter change
         rating_filter.change(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Checkbox changes
         filter_extra_images.change(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         filter_negative_images.change(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
+            outputs=[feedback_html, page_number, total_pages_display]
+        )
+        
+        # Include private checkbox change - refresh when toggled
+        include_private_checkbox.change(
+            on_search,
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         
         # Pagination controls
-        def on_page_change(items_per_page, page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
-            return load_and_display_feedback(items_per_page, page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+        def on_page_change(items_per_page, page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
+            return load_and_display_feedback(items_per_page, page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
-        def on_items_per_page_change(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
-            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+        def on_items_per_page_change(items_per_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
+            return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
         page_number.change(
             on_page_change,
-            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         items_per_page_slider.change(
             on_items_per_page_change,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Previous/Next page buttons
-        def go_to_previous_page(items_per_page, current_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
+        def go_to_previous_page(items_per_page, current_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
             new_page = max(1, int(current_page) - 1)
-            return load_and_display_feedback(items_per_page, new_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+            return load_and_display_feedback(items_per_page, new_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
-        def go_to_next_page(items_per_page, current_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative):
+        def go_to_next_page(items_per_page, current_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private):
             # Convert radio selection to reverse boolean
             sort_reverse = (sort_order == "New to Old")
             # Load all feedbacks to calculate total pages (with filters if applicable)
-            all_feedbacks = load_feedback_from_hf_dataset(reverse=sort_reverse)
+            all_feedbacks = load_feedback_from_hf_dataset(reverse=sort_reverse, public_only=not include_private)
             
             # Apply UUID filter if search term provided
             if uuid_search and uuid_search.strip():
@@ -1449,42 +1522,42 @@ def create_feedback_viewer_tab():
                 ]
             
             if not all_feedbacks:
-                return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+                return load_and_display_feedback(items_per_page, 1, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
             
             total_items = len(all_feedbacks)
             items_per_page = max(1, int(items_per_page))
             total_pages = max(1, (total_items + items_per_page - 1) // items_per_page)
             new_page = min(total_pages, int(current_page) + 1)
-            return load_and_display_feedback(items_per_page, new_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative)
+            return load_and_display_feedback(items_per_page, new_page, sort_order, uuid_search, timestamp_start, timestamp_end, rating_filter, filter_extra, filter_negative, include_private)
         
         prev_page_button.click(
             go_to_previous_page,
-            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         next_page_button.click(
             go_to_next_page,
-            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, page_number, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         # Allow Enter key to trigger search
         uuid_search_input.submit(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         timestamp_start_input.submit(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
         
         timestamp_end_input.submit(
             on_search,
-            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images],
+            inputs=[items_per_page_slider, sort_order_radio, uuid_search_input, timestamp_start_input, timestamp_end_input, rating_filter, filter_extra_images, filter_negative_images, include_private_checkbox],
             outputs=[feedback_html, page_number, total_pages_display]
         )
 
