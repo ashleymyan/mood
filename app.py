@@ -52,6 +52,38 @@ if USE_HUGGINGFACE_ZEROGPU:
         logging.warning("Could not import download_models")
 
 
+def create_gif_from_images(images: List[Image.Image], fps: float = 3.0) -> str:
+    """
+    Create a GIF from a list of PIL Images.
+    
+    Args:
+        images: List of PIL Images to combine into a GIF
+        fps: Frames per second for the GIF (default: 3.0)
+    
+    Returns:
+        Path to the temporary GIF file
+    """
+    if not images:
+        return None
+    
+    # Calculate duration in milliseconds (1000ms / fps)
+    duration_ms = int(1000 / fps)
+    
+    # Create a temporary file for the GIF
+    gif_path = os.path.join(tempfile.gettempdir(), f"vibe_blend_{uuid.uuid4().hex}.gif")
+    
+    # Save as GIF with loop
+    images[0].save(
+        gif_path,
+        save_all=True,
+        append_images=images[1:],
+        duration=duration_ms,
+        loop=0  # 0 = infinite loop
+    )
+    
+    return gif_path
+
+
 def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List[Image.Image]:
     """
     Convert various image input formats to a list of PIL Images.
@@ -127,9 +159,11 @@ def create_vibe_blending_tab():
             with gr.Column():
                 with gr.Group():
                     gr.Markdown("**Step 2:** Run Vibe Blending")
-                    with gr.Accordion("Vibe Blending Results", open=False):
-                        blending_results_grid = gr.Image(label="Grid View", show_label=True, format="png")
                     blending_results = gr.Gallery(label="Gallery View", show_label=False, columns=4, rows=3, interactive=False)
+                    with gr.Accordion("Vibe Blending Results (grid view)", open=False):
+                        blending_results_grid = gr.Image(label="Grid View", show_label=True, format="png", interactive=False)
+                    with gr.Accordion("Vibe Blending Results (GIF view)", open=False):
+                        blending_results_gif = gr.Image(label="GIF View", show_label=True, format="gif", interactive=False)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
         
         def _process_input_images(input1, input2, extra_images, negative_images):
@@ -157,9 +191,13 @@ def create_vibe_blending_tab():
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
             blended_images_list = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
             blended_images_grid = create_image_grid(blended_images_list, rows=np.ceil(len(blended_images_list)/4).astype(int), cols=4)
-            return blended_images_grid, blended_images_list  # Return grid and list for display
+            
+            # Create GIF at 3 frames per second
+            gif_path = create_gif_from_images(blended_images_list, fps=3.0)
+            
+            return blended_images_grid, blended_images_list, gif_path  # Return grid, list, and GIF for display
         
-        blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results_grid, blending_results])
+        blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results_grid, blending_results, blending_results_gif])
         
         def feedback_button_click(rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
             """Handle feedback submission and store to Hugging Face Dataset."""
