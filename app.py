@@ -14,7 +14,7 @@ import pandas as pd
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
 from feedback_viewer import create_feedback_viewer_tab, store_feedback_to_hf_dataset
-from llm_planner import analyze_pair_with_llm
+from llm_planner import analyze_pair_with_llm, judge_best_blend
 
 # Hugging Face Datasets for feedback storage
 try:
@@ -154,6 +154,13 @@ def create_vibe_blending_tab():
                             label="Creative Intent (optional)",
                             placeholder="e.g. emphasize colors, keep faces simple"
                         )
+                    with gr.Row():
+                        use_llm_judge = gr.Checkbox(label="Use LLM Judge to pick best blend", value=False, info="Uses GPT-4o vision to select the highest quality result")
+                    judge_criteria = gr.Textbox(
+                        label="Judge Criteria (optional)",
+                        placeholder="e.g., most creative, best coherence, highest quality",
+                        visible=False
+                    )
                 with gr.Group():
                     gr.Markdown("**Step 3:** Submit your feedback")
                     rating = gr.Radio(label="How do you like the results?", choices=["1", "2", "3", "4", "5"])
@@ -171,6 +178,7 @@ def create_vibe_blending_tab():
                         blending_results_gif = gr.Image(label="GIF View", show_label=True, format="gif", interactive=False)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
                     llm_explanation = gr.Markdown(label="LLM Creative Explanation")
+                    judge_result_display = gr.Markdown(label="Judge Result", visible=False)
         
         def _process_input_images(input1, input2, extra_images, negative_images):
             input1 = load_gradio_images_helper(input1)
@@ -191,7 +199,7 @@ def create_vibe_blending_tab():
             return input1, input2, extra_images, negative_images
         
         # Training wrapper function
-        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt):
+        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt, use_llm_judge, judge_criteria):
             input1, input2, extra_images, negative_images = _process_input_images(input1, input2, extra_images, negative_images)
 
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
@@ -205,6 +213,17 @@ def create_vibe_blending_tab():
             alpha_weights = np.linspace(alpha_start_eff, alpha_end_eff, n_steps_eff+2)[1:-1].tolist()
 
             blended_images_list = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
+            
+            # Judge the blended results if enabled
+            judge_md = ""
+            if use_llm_judge:
+                judge_result = judge_best_blend(input1, input2, blended_images_list, creative_prompt, judge_criteria)
+                best_idx = judge_result["best_index"]
+                judge_md = f"**Judge Result (Best Image #{best_idx}):** {judge_result['reason']}"
+                # Move best image to front for prominence
+                best_image = blended_images_list.pop(best_idx)
+                blended_images_list.insert(0, best_image)
+            
             blended_images_grid = create_image_grid(blended_images_list, rows=np.ceil(len(blended_images_list)/4).astype(int), cols=4)
             
             explanation_md = f"**LLM focus:** {', '.join(llm_suggestion.get('focus_attributes', []))}\n\n"
@@ -213,12 +232,19 @@ def create_vibe_blending_tab():
             # Create GIF at 3 frames per second
             gif_path = create_gif_from_images(blended_images_list, fps=3.0)
             
-            return blended_images_grid, blended_images_list, gif_path, explanation_md  # Return grid, list, and GIF for display
+            return blended_images_grid, blended_images_list, gif_path, explanation_md, gr.update(value=judge_md, visible=use_llm_judge)  # Return grid, list, GIF, explanation, and judge result
         
         blend_button.click(
             blend_button_click,
-            inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt],
-            outputs=[blending_results_grid, blending_results, blending_results_gif, llm_explanation],
+            inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt, use_llm_judge, judge_criteria],
+            outputs=[blending_results_grid, blending_results, blending_results_gif, llm_explanation, judge_result_display],
+        )
+        
+        # Make judge criteria visible/invisible based on checkbox
+        use_llm_judge.change(
+            lambda x: gr.update(visible=x),
+            inputs=[use_llm_judge],
+            outputs=[judge_criteria]
         )
 
         def feedback_button_click(rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
