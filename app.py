@@ -14,6 +14,7 @@ import pandas as pd
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
 from feedback_viewer import create_feedback_viewer_tab, store_feedback_to_hf_dataset
+from llm_planner import analyze_pair_with_llm
 
 # Hugging Face Datasets for feedback storage
 try:
@@ -149,6 +150,10 @@ def create_vibe_blending_tab():
                         with gr.Row():
                             extra_images = gr.Gallery(label="Extra Images (optional)", show_label=True, columns=3, rows=2, height=150)
                             negative_images = gr.Gallery(label="Negative Images (optional)", show_label=True, columns=3, rows=2, height=150)
+                        creative_prompt = gr.Textbox(
+                            label="Creative Intent (optional)",
+                            placeholder="e.g. emphasize colors, keep faces simple"
+                        )
                 with gr.Group():
                     gr.Markdown("**Step 3:** Submit your feedback")
                     rating = gr.Radio(label="How do you like the results?", choices=["1", "2", "3", "4", "5"])
@@ -165,6 +170,7 @@ def create_vibe_blending_tab():
                     with gr.Accordion("Vibe Blending Results (GIF view)", open=False):
                         blending_results_gif = gr.Image(label="GIF View", show_label=True, format="gif", interactive=False)
                     blend_button = gr.Button("🔴 Run Vibe Blending", variant="primary")
+                    llm_explanation = gr.Markdown(label="LLM Creative Explanation")
         
         def _process_input_images(input1, input2, extra_images, negative_images):
             input1 = load_gradio_images_helper(input1)
@@ -185,20 +191,36 @@ def create_vibe_blending_tab():
             return input1, input2, extra_images, negative_images
         
         # Training wrapper function
-        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps):
+        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt):
             input1, input2, extra_images, negative_images = _process_input_images(input1, input2, extra_images, negative_images)
 
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps+2)[1:-1].tolist()
+            llm_suggestion = analyze_pair_with_llm(input1, input2, creative_prompt)
+
+            # Apply LLM suggestions to alpha / n_steps
+            alpha_start_eff = llm_suggestion.get("alpha_start", alpha_start)
+            alpha_end_eff = llm_suggestion.get("alpha_end", alpha_end)
+            n_steps_eff = llm_suggestion.get("n_steps", None) or int(n_steps)
+
+            alpha_weights = np.linspace(alpha_start_eff, alpha_end_eff, n_steps_eff+2)[1:-1].tolist()
+
             blended_images_list = run_vibe_blend_not_safe(input1, input2, extra_images, negative_images, DEFAULT_CONFIG_PATH, alpha_weights)
             blended_images_grid = create_image_grid(blended_images_list, rows=np.ceil(len(blended_images_list)/4).astype(int), cols=4)
             
+            explanation_md = f"**LLM focus:** {', '.join(llm_suggestion.get('focus_attributes', []))}\n\n"
+            explanation_md += llm_suggestion.get("explanation", "")
+        
             # Create GIF at 3 frames per second
             gif_path = create_gif_from_images(blended_images_list, fps=3.0)
             
-            return blended_images_grid, blended_images_list, gif_path  # Return grid, list, and GIF for display
+            return blended_images_grid, blended_images_list, gif_path, explanation_md  # Return grid, list, and GIF for display
         
-        blend_button.click(blend_button_click, inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps], outputs=[blending_results_grid, blending_results, blending_results_gif])
-        
+        blend_button.click(
+            blend_button_click,
+            inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt],
+            outputs=[blending_results_grid, blending_results, blending_results_gif, llm_explanation],
+        )
+
         def feedback_button_click(rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
             """Handle feedback submission and store to Hugging Face Dataset."""
             if not rating:
