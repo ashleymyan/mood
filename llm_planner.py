@@ -2,8 +2,9 @@ from typing import Dict, Any, List
 from io import BytesIO
 import base64
 import json
+import os
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from openai import OpenAI
 
 client = OpenAI()
@@ -243,3 +244,181 @@ def judge_best_blend(
         return {"best_index": best, "reason": reason}
     except Exception:
         return {"best_index": 0, "reason": "Judge failed to return valid JSON; defaulting to candidate 0."}
+
+
+# ---------------------------------------------------------------------------
+# Poster text helpers
+# ---------------------------------------------------------------------------
+
+def _get_font(size: int) -> ImageFont.FreeTypeFont:
+    """Return a truetype font at the given size, falling back to PIL default."""
+    candidates = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf",
+        "/usr/share/fonts/TTF/DejaVuSans-Bold.ttf",
+        "/System/Library/Fonts/Helvetica.ttc",
+        "/Library/Fonts/Arial Bold.ttf",
+    ]
+    for path in candidates:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                continue
+    return ImageFont.load_default()
+
+
+def create_text_overlay_poster(
+    base_image: Image.Image,
+    title: str = "",
+    tagline: str = "",
+    director: str = "",
+    cast: str = "",
+    release_year: str = "",
+) -> Image.Image:
+    """
+    Composite text onto the base image to produce a movie-poster layout.
+    Title + tagline appear in the lower third; director/cast/year at the very bottom.
+    """
+    img = base_image.copy().convert("RGBA")
+    w, h = img.size
+
+    # ── dark gradient bands at top (for credits row) and bottom (for title block) ──
+    band = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    bd = ImageDraw.Draw(band)
+    bottom_band_h = h // 3
+    bd.rectangle([(0, h - bottom_band_h), (w, h)], fill=(0, 0, 0, 175))
+    bd.rectangle([(0, 0), (w, h // 8)], fill=(0, 0, 0, 120))
+    img = Image.alpha_composite(img, band).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+
+    def _shadow_text(x: int, y: int, text: str, font: ImageFont.FreeTypeFont,
+                     fill=(255, 255, 255), shadow=(0, 0, 0), offset: int = 2):
+        draw.text((x + offset, y + offset), text, font=font, fill=shadow)
+        draw.text((x, y), text, font=font, fill=fill)
+
+    def _center_text(y: int, text: str, font: ImageFont.FreeTypeFont,
+                     fill=(255, 255, 255)):
+        bbox = draw.textbbox((0, 0), text, font=font)
+        text_w = bbox[2] - bbox[0]
+        x = max(16, (w - text_w) // 2)
+        _shadow_text(x, y, text, font, fill=fill)
+        return bbox[3] - bbox[1]  # return line height
+
+    y_cursor = h - bottom_band_h + 18
+
+    # Title
+    if title:
+        title_size = max(48, w // 10)
+        title_font = _get_font(title_size)
+        line_h = _center_text(y_cursor, title.upper(), title_font)
+        y_cursor += line_h + 10
+
+    # Tagline
+    if tagline:
+        tag_size = max(20, w // 28)
+        tag_font = _get_font(tag_size)
+        line_h = _center_text(y_cursor, tagline, tag_font, fill=(220, 210, 200))
+        y_cursor += line_h + 14
+
+    # Credits block at very bottom
+    credit_lines = []
+    if director:
+        credit_lines.append(f"Directed by {director}")
+    if cast:
+        credit_lines.append(cast)
+    if release_year:
+        credit_lines.append(str(release_year))
+
+    if credit_lines:
+        cred_size = max(14, w // 55)
+        cred_font = _get_font(cred_size)
+        cy = h - 12
+        for line in reversed(credit_lines):
+            bbox = draw.textbbox((0, 0), line, font=cred_font)
+            lh = bbox[3] - bbox[1]
+            cy -= lh + 6
+            _center_text(cy, line, cred_font, fill=(180, 170, 160))
+
+    return img
+
+
+def generate_poster_with_text(
+    base_image: Image.Image,
+    title: str = "",
+    tagline: str = "",
+    director: str = "",
+    cast: str = "",
+    release_year: str = "",
+    style_notes: str = "",
+) -> Image.Image:
+    """
+    Generate a new AI-created movie poster that incorporates the provided text
+    and matches the visual style of *base_image*.
+
+    Steps:
+      1. Describe the base image's visual style with GPT-4o.
+      2. Ask GPT-4.1 to craft a detailed DALL-E 3 prompt that weaves in the text.
+      3. Call DALL-E 3 and return the result as a PIL Image.
+    """
+    # ── 1. Describe the style of the reference image ──────────────────────
+    style_desc = _describe_image_with_vision(base_image)
+
+    # ── 2. Build the list of text elements ────────────────────────────────
+    text_parts: List[str] = []
+    if title:
+        text_parts.append(f'film title "{title}"')
+    if tagline:
+        text_parts.append(f'tagline "{tagline}"')
+    if director:
+        text_parts.append(f'director credit "Directed by {director}"')
+    if cast:
+        text_parts.append(f'cast listing "{cast}"')
+    if release_year:
+        text_parts.append(f'release year "{release_year}"')
+    text_summary = "; ".join(text_parts) if text_parts else "no specific text required"
+
+    # ── 3. Ask GPT to craft the DALL-E 3 prompt ──────────────────────────
+    system_prompt = (
+        "You are a professional movie-poster art director. "
+        "Given a visual style description and text elements, craft a vivid, specific DALL-E 3 prompt "
+        "for a cinematic movie poster. "
+        "The poster MUST visually show every piece of text exactly as given—rendered in a legible, "
+        "stylish font appropriate to the mood. "
+        "Describe composition, lighting, color palette, typography placement, and atmosphere. "
+        "Return ONLY the DALL-E prompt; no explanation, no preamble."
+    )
+    user_prompt = (
+        f"Reference image style: {style_desc}\n\n"
+        f"Text elements to embed in the poster: {text_summary}\n\n"
+        f"Additional style notes from user: {style_notes or 'none'}\n\n"
+        "Create a DALL-E 3 prompt for a professional movie poster that matches this visual style "
+        "and prominently features all text elements, legibly rendered."
+    )
+
+    plan_resp = client.responses.create(
+        model="gpt-4.1",
+        input=[
+            {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+            {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
+        ],
+    )
+    dalle_prompt = (plan_resp.output_text or "").strip()
+
+    # Prepend a safety prefix so DALL-E knows this is art
+    dalle_prompt = "Cinematic movie poster art. " + dalle_prompt
+
+    # ── 4. Generate with DALL-E 3 (b64 to avoid download request) ────────
+    img_resp = client.images.generate(
+        model="dall-e-3",
+        prompt=dalle_prompt,
+        size="1024x1024",
+        quality="standard",
+        n=1,
+        response_format="b64_json",
+    )
+    b64_data = img_resp.data[0].b64_json
+    img_bytes = base64.b64decode(b64_data)
+    return Image.open(BytesIO(img_bytes)).convert("RGB")
