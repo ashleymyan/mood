@@ -3,6 +3,7 @@ from io import BytesIO
 import base64
 import json
 import os
+import requests
 
 from PIL import Image, ImageDraw, ImageFont
 from openai import OpenAI
@@ -360,8 +361,8 @@ def generate_poster_with_text(
 
     Steps:
       1. Describe the base image's visual style with GPT-4o.
-      2. Ask GPT-4.1 to craft a detailed DALL-E 3 prompt that weaves in the text.
-      3. Call DALL-E 3 and return the result as a PIL Image.
+      2. Ask GPT-4.1 to craft a detailed Ideogram prompt that weaves in the text.
+      3. Call Ideogram API and return the result as a PIL Image.
     """
     # ── 1. Describe the style of the reference image ──────────────────────
     style_desc = _describe_image_with_vision(base_image)
@@ -380,21 +381,22 @@ def generate_poster_with_text(
         text_parts.append(f'release year "{release_year}"')
     text_summary = "; ".join(text_parts) if text_parts else "no specific text required"
 
-    # ── 3. Ask GPT to craft the DALL-E 3 prompt ──────────────────────────
+    # ── 3. Ask GPT to craft the Ideogram prompt ──────────────────────────
     system_prompt = (
         "You are a professional movie-poster art director. "
-        "Given a visual style description and text elements, craft a vivid, specific DALL-E 3 prompt "
+        "Given a visual style description and text elements, craft a vivid, specific Ideogram prompt "
         "for a cinematic movie poster. "
         "The poster MUST visually show every piece of text exactly as given—rendered in a legible, "
         "stylish font appropriate to the mood. "
         "Describe composition, lighting, color palette, typography placement, and atmosphere. "
-        "Return ONLY the DALL-E prompt; no explanation, no preamble."
+        "Ideogram excels at typography, so ensure text is prominent and readable. "
+        "Return ONLY the Ideogram prompt; no explanation, no preamble."
     )
     user_prompt = (
         f"Reference image style: {style_desc}\n\n"
         f"Text elements to embed in the poster: {text_summary}\n\n"
         f"Additional style notes from user: {style_notes or 'none'}\n\n"
-        "Create a DALL-E 3 prompt for a professional movie poster that matches this visual style "
+        "Create an Ideogram prompt for a professional movie poster that matches this visual style "
         "and prominently features all text elements, legibly rendered."
     )
 
@@ -405,20 +407,33 @@ def generate_poster_with_text(
             {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
         ],
     )
-    dalle_prompt = (plan_resp.output_text or "").strip()
+    ideogram_prompt = (plan_resp.output_text or "").strip()
 
-    # Prepend a safety prefix so DALL-E knows this is art
-    dalle_prompt = "Cinematic movie poster art. " + dalle_prompt
+    if not ideogram_prompt:
+        ideogram_prompt = f"A cinematic movie poster featuring: {text_summary}. Style: {style_desc}"
 
-    # ── 4. Generate with DALL-E 3 (b64 to avoid download request) ────────
-    img_resp = client.images.generate(
-        model="dall-e-3",
-        prompt=dalle_prompt,
-        size="1024x1024",
-        quality="standard",
-        n=1,
-        response_format="b64_json",
+    # Prepend a safety prefix so Ideogram knows this is art
+    ideogram_prompt = "Cinematic movie poster art. " + ideogram_prompt
+
+    # ── 4. Generate with Ideogram API ────────────────────────────────
+    api_key = os.environ.get("IDEOGRAM_API_KEY")
+    if not api_key:
+        raise ValueError("IDEOGRAM_API_KEY environment variable not set")
+
+    response = requests.post(
+        "https://api.ideogram.ai/v1/ideogram-v3/generate",
+        headers={"Api-Key": api_key},
+        files={
+            "prompt": (None, ideogram_prompt),
+            "rendering_speed": (None, "DEFAULT"),
+        }
     )
-    b64_data = img_resp.data[0].b64_json
-    img_bytes = base64.b64decode(b64_data)
+    response.raise_for_status()
+    data = response.json()
+    image_url = data["data"][0]["url"]
+
+    # Download the image
+    img_response = requests.get(image_url)
+    img_response.raise_for_status()
+    img_bytes = img_response.content
     return Image.open(BytesIO(img_bytes)).convert("RGB")

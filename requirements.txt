@@ -15,3 +15,4 @@ ncut_pytorch==2.3.0
 datasets
 huggingface_hub
 openai
+requests
