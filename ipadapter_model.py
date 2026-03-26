@@ -9,6 +9,7 @@ This module provides utilities for working with IP-Adapter models, including:
 """
 
 from typing import List, Optional, Union, Tuple
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -19,6 +20,10 @@ from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline, DDIMSc
 torch.backends.cuda.enable_cudnn_sdp(False)
 
 from ip_adapter import IPAdapterPlus, IPAdapterPlusXL
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+DOWNLOADS_DIR = PROJECT_ROOT / "downloads"
 
 
 # ===== Image Utility Functions =====
@@ -200,8 +205,15 @@ def load_ip_adapter_model(device: str = "cuda", sd_only: bool = False) -> IPAdap
     # Model and checkpoint paths
     base_model_path = "SG161222/Realistic_Vision_V4.0_noVAE"
     vae_model_path = "stabilityai/sd-vae-ft-mse"
-    image_encoder_path = "./downloads/models/image_encoder"
-    ip_checkpoint_path = "./downloads/models/ip-adapter-plus_sd15.bin"
+    image_encoder_path = DOWNLOADS_DIR / "models" / "image_encoder"
+    checkpoint_candidates = [
+        DOWNLOADS_DIR / "models" / "ip-adapter-plus_sd15.safetensors",
+        DOWNLOADS_DIR / "models" / "ip-adapter-plus_sd15.bin",
+    ]
+    ip_checkpoint_path = next(
+        (path for path in checkpoint_candidates if path.exists()),
+        checkpoint_candidates[0],
+    )
 
     # Configure DDIM scheduler
     noise_scheduler = DDIMScheduler(
@@ -233,8 +245,8 @@ def load_ip_adapter_model(device: str = "cuda", sd_only: bool = False) -> IPAdap
     # Initialize IP-Adapter with 16 tokens for better image conditioning
     ip_model = IPAdapterPlus(
         pipeline, 
-        image_encoder_path, 
-        ip_checkpoint_path, 
+        str(image_encoder_path),
+        str(ip_checkpoint_path),
         device, 
         num_tokens=16
     )
@@ -247,15 +259,28 @@ def load_ip_adapter_model(device: str = "cuda", sd_only: bool = False) -> IPAdap
 
 def load_ip_adapter_xl_model(device: str = "cuda") -> IPAdapterPlusXL:
     base_model_path = "SG161222/RealVisXL_V1.0"
-    image_encoder_path = "./downloads/models/image_encoder"
-    ip_ckpt = "./downloads/sdxl_models/ip-adapter-plus_sdxl_vit-h.bin"
+    image_encoder_path = DOWNLOADS_DIR / "models" / "image_encoder"
+    checkpoint_candidates = [
+        DOWNLOADS_DIR / "sdxl_models" / "ip-adapter-plus_sdxl_vit-h.safetensors",
+        DOWNLOADS_DIR / "sdxl_models" / "ip-adapter-plus_sdxl_vit-h.bin",
+    ]
+    ip_ckpt = next(
+        (path for path in checkpoint_candidates if path.exists()),
+        checkpoint_candidates[0],
+    )
 
     pipe = StableDiffusionXLPipeline.from_pretrained(
         base_model_path,
         torch_dtype=torch.float16,
         add_watermarker=False,
     )
-    ip_model = IPAdapterPlusXL(pipe, image_encoder_path, ip_ckpt, device, num_tokens=16)
+    ip_model = IPAdapterPlusXL(
+        pipe,
+        str(image_encoder_path),
+        str(ip_ckpt),
+        device,
+        num_tokens=16,
+    )
 
     return ip_model
 
