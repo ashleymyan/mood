@@ -13,11 +13,16 @@ import pandas as pd
 
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
-from feedback_viewer import create_feedback_viewer_tab, store_feedback_to_hf_dataset
 from color_palette_analyzer import create_color_palette_tab
 from image_comparator import create_image_comparator_tab
 from reference_library import create_reference_library_tab
-from llm_planner import analyze_pair_with_llm, judge_best_blend, generate_poster_with_text, create_text_overlay_poster
+from llm_planner import (
+    analyze_pair_with_llm,
+    judge_best_blend,
+    generate_poster_with_text,
+    create_text_overlay_poster,
+    interpret_feedback_for_refinement,
+)
 
 # Hugging Face Datasets for feedback storage
 try:
@@ -123,7 +128,8 @@ def load_gradio_images_helper(pil_images: Union[List, Image.Image, str]) -> List
 
 def create_vibe_blending_tab():
     """Create a step-by-step vibe blending workflow for filmmakers."""
-    with gr.Tab("Poster Lab"):
+    with gr.Tabs():
+      with gr.Tab("Poster Lab"):
         with gr.Row(elem_classes=["mosaic-logo-row"]):
             logo_home_button = gr.Button("mosaic", variant="secondary", elem_classes=["mosaic-logo-btn", "compact-btn"])
 
@@ -191,6 +197,14 @@ def create_vibe_blending_tab():
                 placeholder="Example: cinematic mood, clear subject, and clean composition",
                 visible=False
             )
+            with gr.Group(visible=False) as suggestions_group:
+                gr.Markdown("### Suggestions from Your Last Feedback")
+                suggestions_md = gr.Markdown("")
+                apply_suggestions_checkbox = gr.Checkbox(
+                    label="Apply AI-suggested parameters when generating",
+                    value=True,
+                    info="When checked, the suggestions above will override the sliders during draft generation",
+                )
             with gr.Row():
                 back_step1_button = gr.Button("Back", variant="secondary", elem_classes=["compact-btn"])
                 generate_button = gr.Button("Generate Poster Drafts", variant="primary", elem_classes=["compact-btn"])
@@ -212,13 +226,6 @@ def create_vibe_blending_tab():
 
             with gr.Row():
                 to_step4_button = gr.Button("Add Text & Create Poster →", variant="primary", elem_classes=["compact-btn"])
-
-            with gr.Group():
-                gr.Markdown("### Share Feedback")
-                rating = gr.Radio(label="How useful are these drafts?", choices=["1", "2", "3", "4", "5"])
-                feedback_form = gr.TextArea(label="Notes (optional)", show_label=True, lines=1, placeholder="Tell us what worked or what felt off...")
-                make_public = gr.Checkbox(label="Share this feedback publicly", value=True, info="Lets others learn from your notes in the feedback viewer")
-                feedback_button = gr.Button("Send Feedback", variant="secondary", size="sm", elem_classes=["compact-btn"])
 
         with gr.Group(visible=False) as step4_page:
             gr.Markdown("## Step 4: Poster Studio")
@@ -297,8 +304,35 @@ def create_vibe_blending_tab():
                             interactive=False,
                         )
 
+            with gr.Group(visible=False) as refinement_group:
+                gr.Markdown("### Refine Your Poster")
+                gr.Markdown("Not happy with the result? Describe what you'd like to change and the AI will adjust the style and parameters for you.")
+                refinement_feedback_input = gr.Textbox(
+                    label="What would you like to change?",
+                    placeholder="e.g. too dark, add more energy, stronger red tones, less text clutter",
+                    lines=2,
+                )
+                with gr.Row():
+                    refine_poster_button = gr.Button("Refine Poster →", variant="primary", elem_classes=["compact-btn"])
+                refinement_adjustment_md = gr.Markdown(visible=False)
+                with gr.Accordion("Iteration History", open=False, visible=False) as history_accordion:
+                    gr.Markdown("All poster versions generated in this session:")
+                    iteration_history_gallery = gr.Gallery(
+                        label="Poster history",
+                        show_label=False,
+                        columns=4,
+                        rows=3,
+                        object_fit="contain",
+                        interactive=False,
+                    )
+
         # ── Step 4 state ──────────────────────────────────────────────────────
         selected_draft_state = gr.State(value=None)
+        evolved_style_notes_state = gr.State(value="")
+        refinement_iteration_state = gr.State(value=0)
+        poster_history_state = gr.State(value=[])
+        refinement_suggestions_state = gr.State(value=None)
+        accumulated_feedback_state = gr.State(value="")
 
         def _page_updates(target: str):
             return (
@@ -375,7 +409,7 @@ def create_vibe_blending_tab():
 
             return input1, input2, extra_images, negative_images
 
-        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt, use_llm_judge, judge_criteria):
+        def blend_button_click(input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt, use_llm_judge, judge_criteria, apply_suggestions, refinement_suggestions):
             input1, input2, extra_images, negative_images = _process_input_images(input1, input2, extra_images, negative_images)
 
             if input1 is None or input2 is None:
@@ -386,7 +420,16 @@ def create_vibe_blending_tab():
                     gr.update(value="### Creative direction notes will appear here"),
                     gr.update(value="", visible=False),
                     gr.update(value="### Add both reference images before generating."),
+                    gr.update(visible=False),
+                    None,
                 )
+
+            # Apply AI-suggested parameters from last refinement if user opted in
+            if apply_suggestions and refinement_suggestions:
+                alpha_start = refinement_suggestions.get("updated_alpha_start", alpha_start)
+                alpha_end = refinement_suggestions.get("updated_alpha_end", alpha_end)
+                n_steps = refinement_suggestions.get("updated_n_steps", n_steps)
+                creative_prompt = refinement_suggestions.get("updated_creative_prompt", creative_prompt)
 
             n_steps_eff = max(1, int(n_steps or 12))
             alpha_weights = np.linspace(alpha_start, alpha_end, n_steps_eff + 2)[1:-1].tolist()
@@ -425,6 +468,8 @@ def create_vibe_blending_tab():
                 explanation_md,
                 gr.update(value=judge_md, visible=use_llm_judge),
                 status_md,
+                gr.update(visible=False),  # hide suggestions panel after consuming
+                None,                       # reset refinement_suggestions_state
             )
 
         # Make judge criteria visible/invisible based on checkbox.
@@ -434,63 +479,98 @@ def create_vibe_blending_tab():
             outputs=[judge_criteria]
         )
 
-        def feedback_button_click(rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results):
-            """Handle feedback submission and store to Hugging Face Dataset."""
-            if not rating:
-                gr.Warning("Please select a rating before submitting feedback.")
-                return gr.update(value=None), gr.update(value=""), gr.update(value=True)
+        def _refine_poster(
+            feedback_text, ai_poster_img,
+            alpha_start, alpha_end, n_steps, creative_prompt,
+            style_notes, accumulated_feedback, poster_history, current_iter,
+        ):
+            """
+            Interpret the user's refinement feedback, save current poster to history,
+            store AI-suggested Step-2 parameters, then navigate back to Step 2.
+            """
+            if not feedback_text or not feedback_text.strip():
+                gr.Warning("Please describe what you'd like to change before refining.")
+                no_change = _page_updates("step4")
+                return (
+                    *no_change,
+                    gr.update(visible=False),
+                    gr.update(),
+                    True,
+                    None,
+                    accumulated_feedback,
+                    poster_history,
+                    gr.update(visible=False),
+                    poster_history,
+                    style_notes,
+                    current_iter,
+                )
 
-            if input1 is None:
-                gr.Warning("Please upload Reference Image A before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
+            poster_img = _normalize_poster_image(ai_poster_img)
+            if poster_img is None:
+                gr.Warning("No poster found to refine. Please generate a poster first.")
+                no_change = _page_updates("step4")
+                return (
+                    *no_change,
+                    gr.update(visible=False),
+                    gr.update(),
+                    True,
+                    None,
+                    accumulated_feedback,
+                    poster_history,
+                    gr.update(visible=False),
+                    poster_history,
+                    style_notes,
+                    current_iter,
+                )
 
-            if input2 is None:
-                gr.Warning("Please upload Reference Image B before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
+            # Save current poster to history
+            new_history = list(poster_history) if poster_history else []
+            new_history.append(poster_img)
+            new_iter = (current_iter or 0) + 1
 
-            if blending_results is None or len(blending_results) == 0:
-                gr.Warning("Please generate poster drafts first before submitting feedback.")
-                return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
-
-            input1_img, input2_img, extra_images_processed, negative_images_processed = _process_input_images(
-                input1, input2, extra_images, negative_images
+            # Interpret feedback and get new parameters
+            suggestions = interpret_feedback_for_refinement(
+                feedback_text=feedback_text,
+                current_poster=poster_img,
+                current_style_notes=style_notes or "",
+                current_alpha_start=float(alpha_start or 0.0),
+                current_alpha_end=float(alpha_end or 1.0),
+                current_n_steps=int(n_steps or 12),
+                current_creative_prompt=creative_prompt or "",
+            )
+            new_style_notes = suggestions["updated_style_notes"]
+            new_accumulated = (
+                (accumulated_feedback + "; " + feedback_text).strip("; ")
+                if accumulated_feedback else feedback_text
             )
 
-            blending_result_images = []
-            for item in blending_results:
-                image_path = item[0] if isinstance(item, tuple) else item
-                if isinstance(image_path, np.ndarray):
-                    blending_result_images.append(Image.fromarray(image_path).convert("RGB"))
-                elif isinstance(image_path, Image.Image):
-                    blending_result_images.append(image_path.convert("RGB"))
-                else:
-                    blending_result_images.append(Image.open(image_path).convert("RGB"))
+            # Build the suggestions markdown for Step 2
+            lines = [f"*Based on: \"{feedback_text}\"*\n"]
+            if suggestions["updated_alpha_start"] != float(alpha_start or 0.0):
+                lines.append(f"- Blend start: **{alpha_start}** → **{suggestions['updated_alpha_start']:.2f}**")
+            if suggestions["updated_alpha_end"] != float(alpha_end or 1.0):
+                lines.append(f"- Blend end: **{alpha_end}** → **{suggestions['updated_alpha_end']:.2f}**")
+            if suggestions["updated_n_steps"] != int(n_steps or 12):
+                lines.append(f"- Draft count: **{int(n_steps or 12)}** → **{suggestions['updated_n_steps']}**")
+            if suggestions["updated_creative_prompt"] != (creative_prompt or ""):
+                lines.append(f"- Creative direction: *{suggestions['updated_creative_prompt']}*")
+            lines.append(f"\n_{suggestions['explanation']}_")
+            suggestions_text = "\n".join(lines)
 
-            success = store_feedback_to_hf_dataset(
-                rating=rating,
-                feedback_text=feedback_form or "",
-                alpha_start=alpha_start,
-                alpha_end=alpha_end,
-                n_steps=n_steps,
-                input1_image=input1_img,
-                input2_image=input2_img,
-                extra_images=extra_images_processed if extra_images_processed else None,
-                negative_images=negative_images_processed if negative_images_processed else None,
-                blending_result_images=blending_result_images,
-                is_public=make_public,
+            page_vis = _page_updates("step2")
+            return (
+                *page_vis,
+                gr.update(visible=True),         # suggestions_group
+                gr.update(value=suggestions_text),  # suggestions_md
+                True,                            # apply_suggestions_checkbox
+                suggestions,                     # refinement_suggestions_state
+                new_accumulated,                 # accumulated_feedback_state
+                new_history,                     # poster_history_state
+                gr.update(visible=True),         # history_accordion
+                new_history,                     # iteration_history_gallery
+                new_style_notes,                 # evolved_style_notes_state (for next gen)
+                new_iter,                        # refinement_iteration_state
             )
-
-            if success:
-                gr.Info("Thank you! Your feedback has been submitted successfully.")
-                return gr.update(value=None), gr.update(value=""), gr.update(value=True)
-
-            error_msg = "Feedback could not be stored. "
-            if not HF_FEEDBACK_DATASET_REPO:
-                error_msg += "Please configure `HF_FEEDBACK_DATASET_REPO` environment variable (e.g., 'your-username/vibe-blending-feedback')."
-            else:
-                error_msg += "Please check the logs for details."
-            gr.Warning(error_msg)
-            return gr.update(value=rating), gr.update(value=feedback_form), gr.update(value=make_public)
 
         get_started_button.click(
             lambda: _page_updates("step1"),
@@ -541,14 +621,17 @@ def create_vibe_blending_tab():
         )
         generate_event.then(
             blend_button_click,
-            inputs=[input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, creative_prompt, use_llm_judge, judge_criteria],
-            outputs=[blending_results_grid, blending_results, blending_results_gif, llm_explanation, judge_result_display, generation_status],
-        )
-
-        feedback_button.click(
-            feedback_button_click,
-            inputs=[rating, feedback_form, make_public, input1, input2, extra_images, negative_images, alpha_start, alpha_end, n_steps, blending_results],
-            outputs=[rating, feedback_form, make_public]
+            inputs=[
+                input1, input2, extra_images, negative_images,
+                alpha_start, alpha_end, n_steps, creative_prompt,
+                use_llm_judge, judge_criteria,
+                apply_suggestions_checkbox, refinement_suggestions_state,
+            ],
+            outputs=[
+                blending_results_grid, blending_results, blending_results_gif,
+                llm_explanation, judge_result_display, generation_status,
+                suggestions_group, refinement_suggestions_state,
+            ],
         )
 
         # ── Step 3 → Step 4 navigation ─────────────────────────────────────────
@@ -597,24 +680,48 @@ def create_vibe_blending_tab():
             outputs=[selected_draft_display, selected_draft_state],
         )
 
+        def _normalize_poster_image(img) -> Optional[Image.Image]:
+            """Coerce various image types to a PIL Image, or return None."""
+            if img is None:
+                return None
+            if isinstance(img, np.ndarray):
+                return Image.fromarray(img).convert("RGB")
+            if isinstance(img, str):
+                try:
+                    return Image.open(img).convert("RGB")
+                except Exception:
+                    return None
+            if isinstance(img, Image.Image):
+                return img.convert("RGB")
+            return None
+
         # ── Generate poster ────────────────────────────────────────────────────
         def _generate_poster(
-            selected_draft, title, tagline, director, cast, release_year, style_notes
+            selected_draft, title, tagline, director, cast, release_year, style_notes,
+            accumulated_feedback, poster_history, current_iter,
         ):
+            base_outputs_fail = (
+                gr.update(value="### Please select a base draft first."),
+                gr.update(visible=False),
+                gr.update(value=None),
+                gr.update(value=None),
+                gr.update(visible=False),   # refinement_group
+                style_notes,                # evolved_style_notes_state
+                current_iter,               # refinement_iteration_state
+                poster_history,             # poster_history_state (unchanged)
+                gr.update(visible=False),   # refinement_adjustment_md
+                gr.update(visible=False),   # history_accordion
+                poster_history,             # iteration_history_gallery
+            )
             if selected_draft is None:
                 gr.Warning("Please click a draft above to select a base image.")
-                yield (
-                    gr.update(value="### Please select a base draft first."),
-                    gr.update(visible=False),
-                    gr.update(value=None),
-                    gr.update(value=None),
-                )
+                yield base_outputs_fail
                 return
 
-            if isinstance(selected_draft, np.ndarray):
-                selected_draft = Image.fromarray(selected_draft).convert("RGB")
-            elif isinstance(selected_draft, str):
-                selected_draft = Image.open(selected_draft).convert("RGB")
+            selected_draft = _normalize_poster_image(selected_draft)
+            if selected_draft is None:
+                yield base_outputs_fail
+                return
 
             status_md = "### Generating your poster... this may take 20–40 seconds."
             yield (
@@ -622,6 +729,13 @@ def create_vibe_blending_tab():
                 gr.update(visible=False),
                 gr.update(value=None),
                 gr.update(value=None),
+                gr.update(visible=False),
+                style_notes,
+                current_iter,
+                poster_history,
+                gr.update(visible=False),
+                gr.update(visible=False),
+                poster_history,
             )
 
             # PIL overlay (fast, always succeeds)
@@ -634,7 +748,11 @@ def create_vibe_blending_tab():
                 release_year=release_year,
             )
 
-            # DALL-E generation (may raise)
+            # Combine any accumulated feedback into style notes
+            combined_style_notes = style_notes or ""
+            if accumulated_feedback:
+                combined_style_notes = f"{combined_style_notes}; {accumulated_feedback}".strip("; ")
+
             ai_img = None
             try:
                 ai_img = generate_poster_with_text(
@@ -644,17 +762,27 @@ def create_vibe_blending_tab():
                     director=director,
                     cast=cast,
                     release_year=release_year,
-                    style_notes=style_notes,
+                    style_notes=combined_style_notes,
                 )
                 status_done = f"### Poster ready! ({title or 'Untitled'})"
             except Exception as exc:
                 status_done = f"### Text overlay ready. AI generation failed: {exc}"
+
+            history = list(poster_history) if poster_history else []
+            show_history = len(history) > 0
 
             yield (
                 gr.update(value=status_done),
                 gr.update(visible=True),
                 gr.update(value=ai_img),
                 gr.update(value=overlay_img),
+                gr.update(visible=True),        # show refinement_group
+                style_notes,                    # evolved_style_notes_state (unchanged here)
+                current_iter,                   # refinement_iteration_state (unchanged here)
+                history,                        # poster_history_state
+                gr.update(visible=False),       # refinement_adjustment_md
+                gr.update(visible=show_history),
+                history,
             )
 
         generate_poster_button.click(
@@ -667,12 +795,72 @@ def create_vibe_blending_tab():
                 poster_cast,
                 poster_year,
                 poster_style_notes,
+                accumulated_feedback_state,
+                poster_history_state,
+                refinement_iteration_state,
             ],
-            outputs=[poster_status, poster_output_group, poster_ai_output, poster_overlay_output],
+            outputs=[
+                poster_status,
+                poster_output_group,
+                poster_ai_output,
+                poster_overlay_output,
+                refinement_group,
+                evolved_style_notes_state,
+                refinement_iteration_state,
+                poster_history_state,
+                refinement_adjustment_md,
+                history_accordion,
+                iteration_history_gallery,
+            ],
         )
 
+        refine_poster_button.click(
+            _refine_poster,
+            inputs=[
+                refinement_feedback_input,
+                poster_ai_output,
+                alpha_start, alpha_end, n_steps, creative_prompt,
+                evolved_style_notes_state,
+                accumulated_feedback_state,
+                poster_history_state,
+                refinement_iteration_state,
+            ],
+            outputs=[
+                home_page, step1_page, step2_page, step3_page, step4_page,
+                suggestions_group,
+                suggestions_md,
+                apply_suggestions_checkbox,
+                refinement_suggestions_state,
+                accumulated_feedback_state,
+                poster_history_state,
+                history_accordion,
+                iteration_history_gallery,
+                evolved_style_notes_state,
+                refinement_iteration_state,
+            ],
+        )
 
-# Feedback viewer functions moved to feedback_viewer.py
+      with gr.Tab("Iteration History"):
+        gr.Markdown("## Iteration History")
+        gr.Markdown("All poster versions generated in this session — use **Refresh** to see the latest.")
+        history_tab_gallery = gr.Gallery(
+            label="All generated posters",
+            show_label=False,
+            columns=4,
+            rows=4,
+            object_fit="contain",
+            interactive=False,
+        )
+        refresh_history_btn = gr.Button("Refresh History", variant="secondary", elem_classes=["compact-btn"])
+        refresh_history_btn.click(
+            lambda history: history,
+            inputs=[poster_history_state],
+            outputs=[history_tab_gallery],
+        )
+
+      create_color_palette_tab()
+      create_image_comparator_tab()
+      create_reference_library_tab()
 
 
 def create_merged_interface():
@@ -821,10 +1009,6 @@ def create_merged_interface():
     demo = gr.Blocks(theme=theme, css=custom_css)
     with demo:
         create_vibe_blending_tab()
-        create_feedback_viewer_tab()
-        # create_color_palette_tab()
-        # create_image_comparator_tab()
-        # create_reference_library_tab()
     
     return demo
 

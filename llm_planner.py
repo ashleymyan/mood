@@ -346,6 +346,95 @@ def create_text_overlay_poster(
     return img
 
 
+def interpret_feedback_for_refinement(
+    feedback_text: str,
+    current_poster: Image.Image,
+    current_style_notes: str = "",
+    current_alpha_start: float = 0.0,
+    current_alpha_end: float = 1.0,
+    current_n_steps: int = 12,
+    current_creative_prompt: str = "",
+) -> Dict[str, Any]:
+    """
+    Interpret natural-language feedback on a generated poster and return adjusted
+    Step-2 controls and poster style notes for the next iteration.
+
+    Only the four Step-2 UI parameters (alpha_start, alpha_end, n_steps,
+    creative_prompt) and the poster style_notes are ever modified — no internal
+    vibe-space model parameters are touched.
+    """
+    poster_desc = _describe_image_with_vision(current_poster)
+
+    system_prompt = (
+        "You are an expert movie-poster art director helping a filmmaker iterate on a poster. "
+        "There are two separate sets of parameters you can update:\n\n"
+        "A) POSTER STYLE NOTES (for the AI image generator, affects look immediately):\n"
+        "   Rewrite to directly address visual feedback "
+        "   (e.g. 'too dark' -> 'brighter, high-key lighting'; "
+        "   'more energy' -> 'dynamic composition, bold contrast').\n\n"
+        "B) STEP-2 DRAFT CONTROLS (used when regenerating blended drafts):\n"
+        "   - alpha_start / alpha_end: how far to interpolate between the two reference images. "
+        "     Only change if the feedback is about the fundamental mood/vibe balance.\n"
+        "   - n_steps: number of draft variants. Only change if user asks for more/fewer options.\n"
+        "   - creative_prompt: ALWAYS update this to incorporate the user's feedback text "
+        "     so the next draft generation reflects what the user wants.\n\n"
+        "Constraints:\n"
+        "- Return ONLY a single JSON object, no prose, no code fences.\n"
+        "- JSON keys: updated_style_notes (string, under 200 chars), "
+        "  updated_alpha_start (float), updated_alpha_end (float), "
+        "  updated_n_steps (int), updated_creative_prompt (string), "
+        "  explanation (string), suggest_redraft (bool).\n"
+        "- alpha values in [-2.0, 2.0]; n_steps in [3, 40].\n"
+        "- explanation: 1-2 sentences."
+    )
+
+    user_prompt = (
+        f"Current poster description: {poster_desc}\n\n"
+        f"User feedback: \"{feedback_text}\"\n\n"
+        f"Current style notes: \"{current_style_notes or 'none'}\"\n"
+        f"Current alpha_start: {current_alpha_start}, alpha_end: {current_alpha_end}\n"
+        f"Current n_steps: {current_n_steps}\n"
+        f"Current creative_prompt: \"{current_creative_prompt or 'none'}\"\n\n"
+        "Update the poster style notes and, if warranted, the Step-2 draft controls."
+    )
+
+    try:
+        resp = client.responses.create(
+            model="gpt-4.1",
+            input=[
+                {"role": "system", "content": [{"type": "input_text", "text": system_prompt}]},
+                {"role": "user", "content": [{"type": "input_text", "text": user_prompt}]},
+            ],
+        )
+        raw = (resp.output_text or "").strip()
+        content = json.loads(raw)
+    except Exception:
+        content = {
+            "updated_style_notes": f"{current_style_notes}; {feedback_text}".strip("; "),
+            "updated_alpha_start": current_alpha_start,
+            "updated_alpha_end": current_alpha_end,
+            "updated_n_steps": current_n_steps,
+            "updated_creative_prompt": current_creative_prompt,
+            "explanation": "Applied feedback directly to style notes.",
+            "suggest_redraft": False,
+        }
+
+    updated_alpha_start = max(-2.0, min(2.0, float(content.get("updated_alpha_start", current_alpha_start))))
+    updated_alpha_end = max(-2.0, min(2.0, float(content.get("updated_alpha_end", current_alpha_end))))
+    raw_steps = content.get("updated_n_steps", current_n_steps)
+    updated_n_steps = max(3, min(40, int(raw_steps) if raw_steps is not None else current_n_steps))
+
+    return {
+        "updated_style_notes": str(content.get("updated_style_notes", current_style_notes or "")),
+        "updated_alpha_start": updated_alpha_start,
+        "updated_alpha_end": updated_alpha_end,
+        "updated_n_steps": updated_n_steps,
+        "updated_creative_prompt": str(content.get("updated_creative_prompt", current_creative_prompt or "")),
+        "explanation": str(content.get("explanation", "")),
+        "suggest_redraft": bool(content.get("suggest_redraft", False)),
+    }
+
+
 def generate_poster_with_text(
     base_image: Image.Image,
     title: str = "",
