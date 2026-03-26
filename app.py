@@ -278,7 +278,7 @@ def create_vibe_blending_tab():
                 gr.Markdown("### Your Generated Posters")
                 with gr.Row():
                     with gr.Column():
-                        gr.Markdown("**AI-Generated Poster** (DALL-E 3, new design inspired by your draft's style)")
+                        gr.Markdown("**AI-Generated Poster** (Ideogram 3.0, new design inspired by your draft's style)")
                         poster_ai_output = gr.Image(
                             label="AI Poster",
                             show_label=False,
