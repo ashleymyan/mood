@@ -822,9 +822,9 @@ def create_merged_interface():
     with demo:
         create_vibe_blending_tab()
         create_feedback_viewer_tab()
-        create_color_palette_tab()
-        create_image_comparator_tab()
-        create_reference_library_tab()
+        # create_color_palette_tab()
+        # create_image_comparator_tab()
+        # create_reference_library_tab()
     
     return demo
 
