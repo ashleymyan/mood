@@ -14,6 +14,9 @@ import pandas as pd
 from vibe_blending import run_vibe_blend_safe, run_vibe_blend_not_safe
 from ipadapter_model import create_image_grid
 from feedback_viewer import create_feedback_viewer_tab, store_feedback_to_hf_dataset
+from color_palette_analyzer import create_color_palette_tab
+from image_comparator import create_image_comparator_tab
+from reference_library import create_reference_library_tab
 from llm_planner import analyze_pair_with_llm, judge_best_blend, generate_poster_with_text, create_text_overlay_poster
 
 # Hugging Face Datasets for feedback storage
@@ -817,9 +820,11 @@ def create_merged_interface():
 
     demo = gr.Blocks(theme=theme, css=custom_css)
     with demo:
-        # Create both tabs
         create_vibe_blending_tab()
         create_feedback_viewer_tab()
+        create_color_palette_tab()
+        create_image_comparator_tab()
+        create_reference_library_tab()
     
     return demo
 
